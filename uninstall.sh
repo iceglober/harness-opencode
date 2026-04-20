@@ -5,8 +5,11 @@
 # Real files you added yourself, and backups we created, are left alone.
 #
 # Usage:
-#   ./uninstall.sh                   # uninstall from $HOME
+#   ./uninstall.sh                   # uninstall from $HOME, interactive prompts
 #   ./uninstall.sh --prefix /tmp/x   # uninstall from an alternate HOME (for testing)
+#   ./uninstall.sh --yes             # answer yes to all prompts (non-interactive)
+#   ./uninstall.sh --no-npm          # skip node_modules / package-lock / bun.lock cleanup
+#   ./uninstall.sh --keep-root       # don't offer to delete the install root
 #   ./uninstall.sh --help            # show this usage block and exit
 
 set -Eeuo pipefail  # -E (errtrace): ERR trap inherits into shell functions
@@ -17,11 +20,17 @@ set -Eeuo pipefail  # -E (errtrace): ERR trap inherits into shell functions
 # install.sh's --prefix convention and there are no known users of the old
 # form at this point.
 HOME_PREFIX="${HOME}"
+YES=0
+NO_NPM=0
+KEEP_ROOT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prefix) HOME_PREFIX="$2"; shift 2 ;;
+    -y|--yes) YES=1; shift ;;
+    --no-npm) NO_NPM=1; shift ;;
+    --keep-root) KEEP_ROOT=1; shift ;;
     --help|-h)
-      sed -n '2,10p' "$0"
+      sed -n '2,13p' "$0"
       exit 0 ;;
     --) shift; break ;;
     -*)
@@ -88,37 +97,57 @@ done < "$MANIFEST"
 
 info "Removed $removed symlinks, skipped $skipped real files"
 
-# Clean up npm artifacts created by install.sh's npm-install step
+# Clean up npm artifacts created by install.sh's npm-install step.
+# --no-npm skips this block entirely; --yes answers "delete" without prompting.
 OC_DIR="${HOME_PREFIX}/.config/opencode"
-for artifact in node_modules package-lock.json bun.lock; do
-  path="${OC_DIR}/${artifact}"
-  if [[ -e "$path" ]]; then
-    read -r -p "Delete ${path}? [y/N] " yn
-    case "$yn" in
-      y|Y|yes|Yes) rm -rf "$path"; ok "deleted $path" ;;
-      *) info "keeping $path" ;;
-    esac
-  fi
-done
-
-read -r -p "Also delete the install root at ${INSTALL_ROOT}? [y/N] " yn
-case "$yn" in
-  y|Y|yes|Yes)
-    rm -rf "$INSTALL_ROOT"
-    ok "Deleted $INSTALL_ROOT"
-    # NEVER touch the shared ${GLORIOUS_ROOT} — other glorious-* tools may live there.
-    if [[ -d "$GLORIOUS_ROOT" ]]; then
-      remaining="$(find "$GLORIOUS_ROOT" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
-      if [[ "$remaining" == "0" ]]; then
-        info "${GLORIOUS_ROOT} is empty; you can remove it manually if no other glorious-* tools use it"
+if [[ "$NO_NPM" == 1 ]]; then
+  info "Skipping npm-artifacts cleanup (--no-npm)"
+else
+  for artifact in node_modules package-lock.json bun.lock; do
+    path="${OC_DIR}/${artifact}"
+    if [[ -e "$path" ]]; then
+      if [[ "$YES" == 1 ]]; then
+        rm -rf "$path"
+        ok "deleted $path (--yes)"
       else
-        info "${GLORIOUS_ROOT} still contains other glorious-* entries — leaving alone"
+        read -r -p "Delete ${path}? [y/N] " yn
+        case "$yn" in
+          y|Y|yes|Yes) rm -rf "$path"; ok "deleted $path" ;;
+          *) info "keeping $path" ;;
+        esac
       fi
     fi
-    ;;
-  *)
-    info "Keeping $INSTALL_ROOT (you can re-run install.sh to re-link)"
-    ;;
-esac
+  done
+fi
+
+# Decide whether to delete the install root. --keep-root short-circuits before
+# any prompt; otherwise --yes answers "delete" non-interactively.
+if [[ "$KEEP_ROOT" == 1 ]]; then
+  info "Keeping $INSTALL_ROOT (--keep-root)"
+else
+  if [[ "$YES" == 1 ]]; then
+    yn=y
+  else
+    read -r -p "Also delete the install root at ${INSTALL_ROOT}? [y/N] " yn
+  fi
+  case "$yn" in
+    y|Y|yes|Yes)
+      rm -rf "$INSTALL_ROOT"
+      ok "Deleted $INSTALL_ROOT"
+      # NEVER touch the shared ${GLORIOUS_ROOT} — other glorious-* tools may live there.
+      if [[ -d "$GLORIOUS_ROOT" ]]; then
+        remaining="$(find "$GLORIOUS_ROOT" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+        if [[ "$remaining" == "0" ]]; then
+          info "${GLORIOUS_ROOT} is empty; you can remove it manually if no other glorious-* tools use it"
+        else
+          info "${GLORIOUS_ROOT} still contains other glorious-* entries — leaving alone"
+        fi
+      fi
+      ;;
+    *)
+      info "Keeping $INSTALL_ROOT (you can re-run install.sh to re-link)"
+      ;;
+  esac
+fi
 
 info "Done. Backup files (*.bak.*) were left in place — remove manually if desired."
