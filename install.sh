@@ -238,22 +238,6 @@ for base in "opencode.json" "AGENTS.md" "package.json"; do
   fi
 done
 
-# -------- write manifest --------
-step "Writing manifest"
-if [[ "$DRY_RUN" == 0 ]]; then
-  mkdir -p "$INSTALL_ROOT"
-  {
-    # Manifest schema v1: header line + one installed path per subsequent line.
-    # Future versions may add fields (hashes, source-path reverse map, install
-    # version). Readers MUST check this header before parsing.
-    printf "# glorious-opencode manifest v1\n"
-    printf "%s\n" "${MANIFEST_ENTRIES[@]}"
-  } > "$MANIFEST"
-  ok "Manifest: ${MANIFEST} (${#MANIFEST_ENTRIES[@]} entries)"
-else
-  info "Would write ${#MANIFEST_ENTRIES[@]} manifest entries to ${MANIFEST} (schema v1)"
-fi
-
 # -------- install npm-delivered plugins --------
 # The `plugin` array in opencode.json references npm packages (e.g. opencode-hashline)
 # that must be installed inside ${OC_DIR}. We just linked package.json above; now
@@ -279,6 +263,60 @@ elif command -v npm >/dev/null 2>&1; then
   ok "Plugins installed via npm"
 else
   warn "Neither bun nor npm found — cannot install opencode-hashline. Install Node.js (or Bun) and re-run."
+fi
+
+# -------- symlink node_modules into the source tree --------
+# Node resolves modules by walking from the *realpath* of the importing file.
+# Tool/plugin files live at realpath ${SRC_ROOT}/home/.config/opencode/{tools,plugins}/*.ts,
+# so their module resolution walks ancestors of that path looking for node_modules/.
+# None of those ancestors currently contains one — bun/npm installed into ${OC_DIR}.
+# Drop a symlink at ${SRC_ROOT}/home/.config/opencode/node_modules so both
+# resolution paths (realpath-based and ${OC_DIR}-based) succeed. See issue #10.
+step "Linking node_modules into source tree so tools can resolve npm deps"
+SRC_NM="${SRC_ROOT}/home/.config/opencode/node_modules"
+TARGET_NM="${OC_DIR}/node_modules"
+_skip_nm_manifest=0
+if [[ "$DRY_RUN" == 0 && ! -d "$TARGET_NM" ]]; then
+  warn "  ${TARGET_NM} does not exist (npm install did not produce one) — skipping node_modules symlink"
+  _skip_nm_manifest=1
+elif [[ -L "$SRC_NM" ]]; then
+  _nm_target="$(readlink "$SRC_NM")"
+  if [[ "$_nm_target" == "$TARGET_NM" ]]; then
+    say "  ${c_dim}= $SRC_NM (already linked)${c_reset}"
+  else
+    warn "  ! $SRC_NM points elsewhere → $_nm_target; re-linking"
+    run ln -sfn "$TARGET_NM" "$SRC_NM"
+  fi
+  unset _nm_target
+elif [[ -e "$SRC_NM" ]]; then
+  warn "  ! $SRC_NM exists as a real directory/file (not a symlink); leaving alone."
+  warn "    To recover: rm -rf '$SRC_NM' && re-run install.sh"
+  _skip_nm_manifest=1
+else
+  ok "  + $SRC_NM → $TARGET_NM"
+  run ln -s "$TARGET_NM" "$SRC_NM"
+fi
+if [[ "$_skip_nm_manifest" == 0 ]]; then
+  MANIFEST_ENTRIES+=("$SRC_NM")
+fi
+unset _skip_nm_manifest
+
+# -------- write manifest --------
+# Written at the end so every linked path (including the node_modules symlink
+# above) is captured in a single pass.
+step "Writing manifest"
+if [[ "$DRY_RUN" == 0 ]]; then
+  mkdir -p "$INSTALL_ROOT"
+  {
+    # Manifest schema v1: header line + one installed path per subsequent line.
+    # Future versions may add fields (hashes, source-path reverse map, install
+    # version). Readers MUST check this header before parsing.
+    printf "# glorious-opencode manifest v1\n"
+    printf "%s\n" "${MANIFEST_ENTRIES[@]}"
+  } > "$MANIFEST"
+  ok "Manifest: ${MANIFEST} (${#MANIFEST_ENTRIES[@]} entries)"
+else
+  info "Would write ${#MANIFEST_ENTRIES[@]} manifest entries to ${MANIFEST} (schema v1)"
 fi
 
 # -------- doctor --------
