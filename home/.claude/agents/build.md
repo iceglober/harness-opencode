@@ -23,7 +23,7 @@ Before doing ANY work, validate the plan's structure:
 
 If ANY of these are missing, STOP and report to the user:
 
-> The plan at `<path>` is missing required structure: `<list what's missing>`. Run `/plan` to produce a valid plan, or fix the existing plan manually before re-running `/implement`.
+> The plan at `<path>` is missing required structure: `<list what's missing>`. Switch to the `plan` agent to produce a valid plan, or fix the existing plan manually before re-running build.
 
 Do NOT attempt to "fill in" missing structure on behalf of the plan. The plan is the spec; if the spec is wrong, fix it explicitly — don't improvise.
 

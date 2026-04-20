@@ -4,7 +4,7 @@
 
 ## Goal
 
-Install the glorious-opencode harness globally for the current user. This gives them a default OpenCode agent (`orchestrator`), slash commands (`/plan`, `/implement`, `/ship`, etc.), subagents, skills, tools, and MCP wiring. Works for both OpenCode and Claude Code.
+Install the glorious-opencode harness globally for the current user. This gives them three primary OpenCode agents (`orchestrator`, `plan`, `build`), slash commands (`/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`), subagents, skills, tools, and MCP wiring. Works for both OpenCode and Claude Code.
 
 ## What gets installed
 

@@ -16,16 +16,12 @@ This is the same table that lives in `~/.config/opencode/AGENTS.md`, reproduced 
 
 ## Slash commands
 
-All slash commands (`/plan`, `/implement`, `/ship`, `/autopilot`, `/review`, `/init-deep`) work in both tools — they're markdown files in `~/.claude/commands/` and both tools read that directory.
+All slash commands (`/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`) work in both tools — they're markdown files in `~/.claude/commands/` and both tools read that directory.
 
 ## Primary agents
 
-`orchestrator`, `plan`, and `build` are OpenCode-specific "mode" abstractions (each has its own model, permissions, temperature). Claude Code doesn't have agent modes in the same way, but the corresponding markdown files in `~/.claude/agents/` still work as delegatable subagents via the Task tool.
+`orchestrator`, `plan`, and `build` are OpenCode-specific "mode" abstractions (each has its own model, permissions, temperature). Switch between them with Tab in OpenCode.
 
-For Claude Code, the effective workflow is:
-
-- Run a slash command (e.g., `/plan`, `/implement`)
-- The slash command prompt instructs Claude Code to "act as the plan agent for this turn"
-- Claude Code reads the role's markdown via the Task tool invocation inside the slash command
+Claude Code doesn't have agent modes in the same way, but the corresponding markdown files live at `~/.claude/agents/` and act as delegatable subagents via the Task tool (`@orchestrator`, `@plan`, `@build`). The `orchestrator` prompt is designed to drive a full session end-to-end, so for most Claude Code sessions you just describe what you want and let `@orchestrator` classify + dispatch.
 
 No config change needed.

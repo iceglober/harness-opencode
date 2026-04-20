@@ -64,7 +64,7 @@ Several tools referenced in agent prompts are OpenCode-native. Claude Code users
 | `memory_*` | `@modelcontextprotocol/server-memory` | Claude Code has `auto memory` at `~/.claude/projects/.../memory/` |
 | `question` tool | OpenCode native | `AskUserQuestion` tool in Claude Code |
 
-The slash commands (`/plan`, `/implement`, `/ship`, `/autopilot`, `/review`, `/init-deep`) work in either tool. Primary agents (`orchestrator`, `plan`, `build`) are OpenCode-specific mode abstractions; Claude Code users get equivalent behavior through the slash commands, which instruct Claude Code to "act as the <role> for this turn" when running outside OpenCode's agent modes.
+The slash commands (`/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`) work in either tool. Primary agents (`orchestrator`, `plan`, `build`) are OpenCode-specific modes — switch between them with Tab in OpenCode. Claude Code users can delegate to these agents via the Task tool (they're regular subagents in `~/.claude/agents/`).
 
 **Agents: if you reference a tool that isn't available in your runtime, fall back to the Claude Code equivalent above without asking the user. Don't block on a missing tool.**
 

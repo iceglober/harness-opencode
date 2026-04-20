@@ -8,7 +8,7 @@ Part of the `glorious` ecosystem — installs alongside other `glorious-*` tools
 
 - **Primary agents** — `orchestrator` (five-phase end-to-end), `plan` (interactive planner), `build` (plan executor)
 - **Subagents** — `gap-analyzer`, `plan-reviewer`, `qa-reviewer`, `code-searcher`, `lib-reader`, `architecture-advisor`, `agents-md-writer`, `docs-maintainer`
-- **Slash commands** — `/plan`, `/implement`, `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`
+- **Slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`
 - **Generic skills** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
 - **OpenCode tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`
 - **OpenCode plugins**
@@ -90,7 +90,7 @@ After install, launch OpenCode in any repo:
 opencode
 ```
 
-Default agent is `orchestrator`. Run any slash command (`/plan`, `/implement`, `/ship`, etc.) and the agent loads the corresponding prompt from `~/.claude/commands/`.
+Default agent is `orchestrator` — for most tasks, just describe what you want and it classifies + dispatches (five-phase flow for substantial work, direct action for trivial edits). Switch to the `plan` or `build` primary agent with Tab. Slash commands (`/ship`, `/autopilot`, `/review`, etc.) are available from any agent; they load prompts from `~/.claude/commands/`.
 
 ### Claude Code
 

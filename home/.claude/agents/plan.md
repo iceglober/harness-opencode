@@ -84,7 +84,7 @@ Delegate to `@plan-reviewer` via the task tool. Provide the plan path.
 Tell the user:
 - The plan path
 - A 2–3 sentence summary
-- The next command to run: `/implement .agent/plans/<slug>.md`
+- The next step: switch to the `build` agent (Tab in OpenCode) and point it at `.agent/plans/<slug>.md`
 
 Stop. Do not begin implementation.
 
