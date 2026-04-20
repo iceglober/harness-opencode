@@ -176,7 +176,13 @@ async function releaseLock(): Promise<void> {
 //
 // Returns null on any shape we don't recognize — caller treats that as
 // "not canonical", which is the safe default.
-export function parseRemoteUrl(url: string): { host: string; path: string } | null {
+//
+// Not exported: opencode's plugin loader treats every named export as a
+// plugin entrypoint (`Object.values(module)`), calls it with PluginInput,
+// and pushes the result into the hooks array. `parseRemoteUrl` would
+// return null, which then crashes the runtime on `hook.config`. Only
+// `export default` should leave this file.
+function parseRemoteUrl(url: string): { host: string; path: string } | null {
   if (!url || typeof url !== "string") return null;
   let s = url.trim();
 
