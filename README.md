@@ -8,7 +8,7 @@ Part of the `glorious` ecosystem — installs alongside other `glorious-*` tools
 
 - **Primary agents** — `orchestrator` (five-phase end-to-end), `plan` (interactive planner), `build` (plan executor)
 - **Subagents** — `gap-analyzer`, `plan-reviewer`, `qa-reviewer`, `code-searcher`, `lib-reader`, `architecture-advisor`, `agents-md-writer`, `docs-maintainer`
-- **Slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`
+- **Slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`, `/fresh`
 - **Generic skills** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
 - **OpenCode tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`
 - **OpenCode plugins**
@@ -99,6 +99,7 @@ Slash commands are available from any agent; they load prompts from `~/.claude/c
 - `/ship <plan-path>` — finalize, commit, push, and open a PR/MR. Human-gated via the `question` tool at each step.
 - `/research <topic>` — deep codebase exploration via parallel subagents.
 - `/init-deep` — generate hierarchical `AGENTS.md` files for the current repo.
+- `/fresh <free text or issue ref>` — create a fresh worktree with an inferred branch name, then dispatch to the repo-specific `.glorious/hooks/fresh` if present. Requires `gsag` (gs-agentic). See [docs/fresh.md](docs/fresh.md).
 
 ### Claude Code
 
