@@ -235,6 +235,16 @@ for base in "opencode.json" "AGENTS.md" "package.json"; do
     warn "  ! $dst exists and was not created by this installer."
     warn "    Not touching it. Compare with: diff '$src' '$dst'"
     warn "    To adopt the glorious-opencode version, run: mv '$dst' '${dst}.bak' && ln -s '$src' '$dst'"
+    # If the user kept their own opencode.json but forgot to include the
+    # hashline plugin, the install "succeeds" but hashline_edit is unavailable
+    # at runtime. Warn loudly. Grep-based check — jq isn't a prereq, and a
+    # bare substring match is sufficient for this tripwire. See issue #3.
+    if [[ "$base" == "opencode.json" ]] && ! grep -q "opencode-hashline" "$dst"; then
+      warn "    Your '$dst' does not include \"opencode-hashline\" in its plugin array."
+      warn "    The hashline_edit tool will not load until you add it. Minimum change:"
+      warn "        \"plugin\": [\"opencode-hashline\", ...your other plugins...]"
+      warn "    See: https://github.com/iceglober/glorious-opencode/blob/main/docs/installation.md#enabling-hashline"
+    fi
   fi
 done
 
@@ -296,6 +306,16 @@ if [[ -d "${OC_DIR}/node_modules/opencode-hashline" ]]; then
   ok "opencode-hashline installed"
 else
   warn "opencode-hashline NOT installed — hashline_edit tool won't be available. Run: cd '${OC_DIR}' && npm install"
+fi
+
+# Distinct from the check above: hashline can be on disk in node_modules
+# but still unloaded at runtime if the user's own opencode.json doesn't
+# list it in the "plugin" array. Both warnings can co-fire. See issue #3.
+if [[ -f "${OC_DIR}/opencode.json" && ! -L "${OC_DIR}/opencode.json" ]] \
+   && ! grep -q "opencode-hashline" "${OC_DIR}/opencode.json"; then
+  warn "opencode-hashline missing from the plugin array in '${OC_DIR}/opencode.json'"
+  warn "  → hashline_edit will not load at runtime. Add \"opencode-hashline\" to the \"plugin\" array."
+  warn "  → See: docs/installation.md#enabling-hashline"
 fi
 
 step "Done."

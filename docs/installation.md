@@ -63,6 +63,28 @@ Both ship disabled in the global `opencode.json`. To enable, either:
 - Edit `~/.config/opencode/opencode.json` directly (replaces the symlink with a real file — diverges from upstream)
 - Or add a project-local override: create `opencode.json` in the project root with `"mcp": { "linear": { "enabled": true } }`. OpenCode merges project config over global.
 
+## Enabling hashline
+
+The `hashline_edit` tool (hash-based safe line edits) is provided by the `opencode-hashline` plugin. The installer adds it to its shipped `opencode.json` automatically, so if you're using that file you have nothing to do.
+
+**If you kept your own `~/.config/opencode/opencode.json`** (the installer refused to overwrite it), you need to include `opencode-hashline` in the `plugin` array yourself, otherwise the `hashline_edit` tool won't load at runtime. Minimum change:
+
+```json
+{
+  "plugin": ["opencode-hashline"]
+}
+```
+
+Or, merged with your existing plugins:
+
+```json
+{
+  "plugin": ["opencode-hashline", "your-other-plugin"]
+}
+```
+
+After saving, re-run `~/.glorious/opencode/install.sh` (or just `bun install` / `npm install` inside `~/.config/opencode/`) to make sure the npm package is present on disk. Then restart your OpenCode session.
+
 ## Updating
 
 ```bash
