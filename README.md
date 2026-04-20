@@ -12,7 +12,7 @@ Part of the `glorious` ecosystem — installs alongside other `glorious-*` tools
 - **Generic skills** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
 - **OpenCode tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`
 - **OpenCode plugins**
-  - Local: `notify` (OS notifications for question tool), `autopilot`
+  - Local: `notify` (OS notifications for question tool), `autopilot`, `auto-update` (opportunistic self-update at session start — see [docs/installation.md#auto-update](docs/installation.md#auto-update))
   - npm-delivered: [`opencode-hashline`](https://www.npmjs.com/package/opencode-hashline) (installed automatically into `~/.config/opencode/node_modules/`)
 - **MCP server wiring** — `serena` (AST code intel), `memory` (cross-session SQLite), `git` (structured blame/log). `playwright` and `linear` defined but disabled — flip a flag to enable.
 - **Claude Code parity** — tool-parity table so agents fall back gracefully on Claude Code (no `tsc_check`? use the project's typecheck command via bash. No Serena? use `grep`.)
@@ -65,10 +65,14 @@ Both methods produce the same layout:
 
 ## Update
 
+Auto-update is on by default — the `auto-update` plugin checks for new commits once a day and applies them at session start, before your first message reaches the agent. No cron, no daemon, runs only when you're using OpenCode. Full details and opt-out (`export GLORIOUS_OPENCODE_AUTO_UPDATE=0`) in [docs/installation.md#auto-update](docs/installation.md#auto-update).
+
+To force an update manually:
+
 ```bash
 ~/.glorious/opencode/update.sh
-# or manually:
-cd ~/.glorious/opencode && git pull
+# or:
+cd ~/.glorious/opencode && git pull && ./install.sh
 ```
 
 Because everything is symlinked, `git pull` is sufficient for existing files. Running `install.sh` again refreshes any new additions and is idempotent.

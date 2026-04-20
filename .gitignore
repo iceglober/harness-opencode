@@ -1,6 +1,15 @@
 # Install-time artifacts (never checked in)
 .manifest
 
+# Auto-updater state + concurrency lock. Live inside the checkout so users
+# can inspect them (~/.glorious/opencode/.auto-update-state.json). Must be
+# ignored so (a) contributors running the tool against their checkout don't
+# dirty their tree, and (b) the plugin's own "dirty-tree → skip" gate
+# doesn't self-trip the first time it writes state.
+/.auto-update-state.json
+/.auto-update.lock
+.auto-update-state.json.tmp.*
+
 # Created by install.sh when running against a local checkout — see issue #10.
 # install.sh symlinks this path to ~/.config/opencode/node_modules so tool
 # files (whose realpath is inside home/) can resolve their npm deps.

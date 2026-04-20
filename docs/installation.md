@@ -85,19 +85,79 @@ Or, merged with your existing plugins:
 
 After saving, re-run `~/.glorious/opencode/install.sh` (or just `bun install` / `npm install` inside `~/.config/opencode/`) to make sure the npm package is present on disk. Then restart your OpenCode session.
 
+## Auto-update
+
+glorious-opencode keeps itself up to date opportunistically. There is no cron, no daemon, no background process — updates happen only when you're actually using OpenCode.
+
+**How it works.** A plugin ships at `~/.config/opencode/plugins/auto-update.ts`. On each OpenCode session it runs in two phases:
+
+1. **Prepare** (async, silent): once per 24 hours it does `git fetch origin main` in `~/.glorious/opencode/`. If `main` is ahead, it records a pending update in `~/.glorious/opencode/.auto-update-state.json`. No files are merged or modified.
+2. **Apply** (synchronous, on first message): when you send your first message that session, the plugin fast-forwards the checkout and re-runs `install.sh` before the message reaches the agent. You'll see a one-line TUI toast and an OS notification listing what landed (e.g. `"glorious-opencode updated (3 commits)"`). The typical delay is 1–3 seconds on your first message.
+
+The split ensures updates never apply mid-session. Agent prompts, config files, and symlinks can't change under a running orchestrator arc.
+
+**When auto-update skips itself.** Any of the following causes the plugin to no-op and record a reason in `last_skip_reason`:
+
+- `opt-out` — `GLORIOUS_OPENCODE_AUTO_UPDATE=0` is set in your shell env.
+- `non-tty` — the process is non-interactive (no TTY on stdout, or `CI` env var set). Build scripts, headless `opencode run` in CI, etc. do not self-update.
+- `not-installed-here` — the checkout is not at `~/.glorious/opencode/`.
+- `remote-not-canonical:<url>` — `origin` does not point at `github.com/iceglober/glorious-opencode`. Supply-chain guard against pulling from a fork or attacker-controlled remote. Override with `GLORIOUS_OPENCODE_AUTO_UPDATE_REMOTE_ALLOW=<exact-url>` if you know what you're doing.
+- `git-op-in-progress:<type>` — a rebase / merge / cherry-pick / bisect is in progress.
+- `non-main-branch:<name>` / `detached-head` — the checkout is off `main`.
+- `dirty-tree` — tracked files have unstaged modifications. Contributors iterating on the harness itself are protected — we never fast-forward a dirty tree.
+- `lock-held` — another OpenCode session is currently holding the lock file. Next session will retry.
+- `rate-limit` — phase A already ran within the last 24 hours. (This is the intended quiet path; no state change on rate-limited runs.)
+- `fetch-failed:<reason>` — `git fetch` failed (reason ∈ `no-remote` / `timeout` / `network` / `auth` / `unknown`). See `last_check_error` for stderr.
+- `not-fast-forwardable` — `origin/main` is not a fast-forward of local `main` (history rewritten or local commits ahead).
+- `apply-failed:<reason>` — phase B's merge or install step failed (reason ∈ `merge` / `installer` / `exception`). `last_apply_output_tail` has the last 2KB of captured stderr.
+- `schema-future` — the state file has `schema > 1`, written by a newer plugin version. The current plugin refuses to downgrade it and skips entirely.
+
+**Inspect what happened.**
+
+```bash
+cat ~/.glorious/opencode/.auto-update-state.json
+```
+
+Look for `last_skip_reason` to understand why a session didn't update, or `last_applied_sha` / `last_applied_ts` to confirm the most recent successful apply.
+
+**Force an immediate re-check** (bypass the 24-hour rate limit):
+
+```bash
+# Delete the state file — next session will recheck and may apply
+rm ~/.glorious/opencode/.auto-update-state.json
+```
+
+**Disable entirely.** Add this to your shell rc:
+
+```bash
+export GLORIOUS_OPENCODE_AUTO_UPDATE=0
+```
+
+With that set, the plugin is a complete no-op — no network calls, no state writes, no notifications. Run `~/.glorious/opencode/update.sh` manually when you want to update.
+
+**What if install.sh fails mid-apply?** The plugin merges first, then re-runs `install.sh`. If the merge succeeds but the installer exits non-zero (e.g., `bun install` network blip), the plugin sets `installer_retry_pending: true` and retries on every subsequent session until install.sh succeeds. After 7 days of continuous failure it gives up and surfaces a loud notification directing you to run the updater manually. The captured tail of the installer's output lives in `last_apply_output_tail` for debugging.
+
+**First run on an existing install.** The first time this plugin lands on a machine that already had glorious-opencode, you'll see a one-time announcement toast calling out the new behavior and how to disable it. The announcement fires only once (tracked via `first_run_announced` in the state file).
+
 ## Updating
+
+For most users there is nothing to do — see [Auto-update](#auto-update). Updates land in the background the next time you start OpenCode and send a message.
+
+To force an immediate update manually:
 
 ```bash
 ~/.glorious/opencode/update.sh
 ```
 
-or manually:
+Or run it by hand:
 
 ```bash
-cd ~/.glorious/opencode && git pull
+cd ~/.glorious/opencode && git pull && ./install.sh
 ```
 
 Because everything is symlinked, `git pull` is sufficient for existing files. Running the installer again is idempotent and picks up any newly-added files.
+
+> **Don't run `update.sh` while an OpenCode session is open.** The installer re-links `~/.config/opencode/plugins/*.ts` as it runs, and a session that's loading a plugin mid-swap can crash with opaque errors like `TypeError: null is not an object`. Close your OpenCode sessions first, or just let auto-update apply the change cleanly on your next session start.
 
 ## Uninstalling
 
