@@ -1,6 +1,11 @@
 # Install-time artifacts (never checked in)
 .manifest
 
+# Created by install.sh when running against a local checkout — see issue #10.
+# install.sh symlinks this path to ~/.config/opencode/node_modules so tool
+# files (whose realpath is inside home/) can resolve their npm deps.
+home/.config/opencode/node_modules
+
 # Editor / OS junk
 .DS_Store
 *.swp
