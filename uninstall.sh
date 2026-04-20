@@ -3,10 +3,38 @@
 #
 # Removes only the symlinks that install.sh created (tracked via .manifest).
 # Real files you added yourself, and backups we created, are left alone.
+#
+# Usage:
+#   ./uninstall.sh                   # uninstall from $HOME
+#   ./uninstall.sh --prefix /tmp/x   # uninstall from an alternate HOME (for testing)
+#   ./uninstall.sh --help            # show this usage block and exit
 
 set -Eeuo pipefail  # -E (errtrace): ERR trap inherits into shell functions
 
-HOME_PREFIX="${1:-$HOME}"
+# -------- arg parsing --------
+# Mirrors install.sh's flag surface. Positional args were supported
+# historically but have been removed — they silently conflicted with
+# install.sh's --prefix convention and there are no known users of the old
+# form at this point.
+HOME_PREFIX="${HOME}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix) HOME_PREFIX="$2"; shift 2 ;;
+    --help|-h)
+      sed -n '2,10p' "$0"
+      exit 0 ;;
+    --) shift; break ;;
+    -*)
+      echo "Unknown arg: $1" >&2
+      echo "Run '$0 --help' for usage." >&2
+      exit 2 ;;
+    *)
+      echo "Positional prefix is no longer supported — use --prefix DIR instead." >&2
+      echo "  e.g. $0 --prefix '$1'" >&2
+      exit 2 ;;
+  esac
+done
+
 GLORIOUS_ROOT="${HOME_PREFIX}/.glorious"
 INSTALL_ROOT="${GLORIOUS_ROOT}/opencode"
 MANIFEST="${INSTALL_ROOT}/.manifest"
