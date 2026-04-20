@@ -8,7 +8,7 @@ Part of the `glorious` ecosystem — installs alongside other `glorious-*` tools
 
 - **Primary agents** — `orchestrator` (five-phase end-to-end), `plan` (interactive planner), `build` (plan executor)
 - **Subagents** — `gap-analyzer`, `plan-reviewer`, `qa-reviewer`, `code-searcher`, `lib-reader`, `architecture-advisor`, `agents-md-writer`, `docs-maintainer`
-- **Slash commands** — `/plan`, `/implement`, `/ship`, `/autopilot`, `/review`, `/init-deep`, `/howto`, `/werk`, `/research`
+- **Slash commands** — `/plan`, `/implement`, `/ship`, `/autopilot`, `/review`, `/init-deep`, `/howto`, `/research`
 - **Generic skills** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
 - **OpenCode tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`
 - **OpenCode plugins**
