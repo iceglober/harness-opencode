@@ -65,11 +65,17 @@ Classify the shape:
 3. On `yes`: `git push -u origin <branch>` (sets upstream if first push).
 4. If push fails due to non-fast-forward, STOP and report — do NOT `--force`.
 
-## 4. Open a PR
+## 4. Open a PR / MR
 
 1. Ask via `question` tool: "Open a PR? (yes / skip)"
-2. On `yes`: run `gh pr create --title "<commit-title>" --body "$(cat <plan-path>)"`. Escape the plan body properly.
-3. Report the PR URL.
+2. On `yes`: detect the git host from `git remote get-url origin` and pick the right CLI:
+   - **GitHub** (`github.com` or `gh auth status` succeeds): `gh pr create --title "<commit-title>" --body "$(cat <plan-path>)"`
+   - **GitLab** (`gitlab.com` or a self-hosted `*.gitlab.*`): `glab mr create --title "<commit-title>" --description "$(cat <plan-path>)"`
+   - **Bitbucket** (`bitbucket.org`): `bb pr create --title "<commit-title>" --body "$(cat <plan-path>)"` (if `bb` is installed) or fall through to step 3
+   - **Gitea / Codeberg** (`codeberg.org`, `gitea.*`): `tea pr create --title "<commit-title>" --description "$(cat <plan-path>)"`
+   - **Unknown host or no CLI available**: construct the web URL to open the compare/new-PR page (e.g., `https://<host>/<owner>/<repo>/compare/<base>...<head>?expand=1` for GitHub-shape hosts) and print it. Tell the user to paste the plan body manually.
+   Escape the plan body properly (beware of backticks, dollar signs, and newlines in shell-argument context).
+3. Report the PR / MR URL.
 
 ## Hard rules
 

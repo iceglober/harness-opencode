@@ -101,7 +101,7 @@ Coding patterns and conventions observed:
 
 ## Dependencies
 - Internal dependencies (other packages/modules)
-- External dependencies (npm packages, services)
+- External dependencies (packages / libraries, system services, third-party APIs)
 
 ## Gotchas & Edge Cases
 Non-obvious things discovered:
