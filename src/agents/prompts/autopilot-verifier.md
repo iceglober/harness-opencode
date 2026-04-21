@@ -8,12 +8,16 @@ permission:
   edit: deny
   bash:
     "*": "allow"
-    "git push *": "deny"
     "git push --force*": "deny"
+    "git push --force-with-lease*": "allow"
     "git push -f *": "deny"
+    "git push * --force*": "deny"
+    "git push * --force-with-lease*": "allow"
+    "git push * -f": "deny"
     "git clean *": "deny"
     "git reset --hard*": "deny"
-    "rm -rf *": "deny"
+    "rm -rf /*": "deny"
+    "rm -rf ~*": "deny"
     "chmod *": "deny"
     "chown *": "deny"
     "sudo *": "deny"
