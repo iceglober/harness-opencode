@@ -34,6 +34,9 @@ Do not ask the user questions — return `[PASS]` or `[FAIL]` verdicts only. If 
    - The change matches the description.
    - No unrelated changes snuck in (scope creep).
 4. For each item in `## Acceptance criteria`, verify it is actually met by reading the code — do NOT trust the `[x]` checkboxes.
+
+4a. **Run plan-state verify commands (fenced plans only).** Run `bash ~/.claude/bin/plan-check.sh --run <plan-path>` to get the list of verify commands for pending items. Execute each one via `bash` (your own bash permission). Any non-zero exit → FAIL the review with `Verify failed: <command> (exit N)`. If the plan has no fence (legacy), plan-check.sh emits `legacy (no plan-state fence)` and nothing else — skip to step 5. The plan-check script does NOT execute commands itself; execution goes through YOUR bash so permissions stay scoped.
+
 5. Run the project's test command. It must pass. Discover the right invocation from `package.json` scripts / `Makefile` / `CONTRIBUTING.md` / project's `AGENTS.md` — common forms: `pnpm test`, `npm test`, `yarn test`, `bun test`, `cargo test`, `pytest`, `go test ./...`.
 6. Run the project's lint command. It must pass. (e.g., `pnpm lint`, `npm run lint`, `ruff check`, `golangci-lint run`.)
 7. Run the project's typecheck/build command if applicable. It must pass. (e.g., `pnpm typecheck`, `tsc --noEmit`, `mypy`, `cargo check`.)

@@ -29,8 +29,8 @@ export default tool({
       ),
     maxResults: tool.schema
       .number()
-      .default(100)
-      .describe("Cap on matches returned"),
+      .default(30)
+      .describe("Cap on matches returned (default reduced from 100 to 30 to limit context flooding)"),
   },
   async execute(args, context) {
     const typesAlt = args.types.join("|");
@@ -61,10 +61,17 @@ export default tool({
     const annotRe = new RegExp(`@(${typesAlt})(?:\\(([^)]+)\\))?`);
     const lineRe = /^(.+?):(\d+):(.*)$/;
 
-    const rows: string[] = [];
+    // Collect ALL matches first (not capped mid-loop), then sort + cap.
+    // This allows age-based sort when includeAge:true so the oldest
+    // debt surfaces first — you care most about stale TODOs, not fresh
+    // ones from this session.
+    interface Row {
+      text: string;
+      ageDays: number; // -1 when age not computed
+    }
+    const rows: Row[] = [];
     const lines = raw.split("\n").filter(Boolean);
     for (const line of lines) {
-      if (rows.length >= args.maxResults) break;
       const parts = line.match(lineRe);
       if (!parts) continue;
       const [, file, lineStr, text] = parts;
@@ -73,6 +80,7 @@ export default tool({
       const type = am[1];
       const author = am[2] ?? "";
       let age = "";
+      let ageDays = -1;
       if (args.includeAge) {
         try {
           const { stdout: blame } = await exec(
@@ -82,21 +90,38 @@ export default tool({
           );
           const ts = parseInt(String(blame).trim().split("\n")[0] ?? "", 10);
           if (!Number.isNaN(ts)) {
-            age = ` (${Math.floor((Date.now() / 1000 - ts) / 86400)}d old)`;
+            ageDays = Math.floor((Date.now() / 1000 - ts) / 86400);
+            age = ` (${ageDays}d old)`;
           }
         } catch {
           // blame can fail for newly added lines; non-fatal
         }
       }
       const authorPart = author ? ` [${author}]` : "";
-      rows.push(`${file}:${lineStr} @${type}${authorPart}${age} — ${text.trim().slice(0, 200)}`);
+      rows.push({
+        text: `${file}:${lineStr} @${type}${authorPart}${age} — ${text.trim().slice(0, 200)}`,
+        ageDays,
+      });
     }
 
     if (rows.length === 0) return "(no annotations found)";
+
+    // Age-sort desc when age data is present (i.e., includeAge was true).
+    // Rows whose blame failed (ageDays=-1) sort to the end.
+    if (args.includeAge) {
+      rows.sort((a, b) => {
+        if (a.ageDays === -1 && b.ageDays === -1) return 0;
+        if (a.ageDays === -1) return 1;
+        if (b.ageDays === -1) return -1;
+        return b.ageDays - a.ageDays;
+      });
+    }
+
+    const capped = rows.slice(0, args.maxResults);
     const truncated =
-      lines.length > args.maxResults
-        ? `\n\n[truncated: ${lines.length - args.maxResults} more]`
+      rows.length > args.maxResults
+        ? `\n\n[truncated: ${rows.length - args.maxResults} more]`
         : "";
-    return rows.join("\n") + truncated;
+    return capped.map((r) => r.text).join("\n") + truncated;
   },
 });

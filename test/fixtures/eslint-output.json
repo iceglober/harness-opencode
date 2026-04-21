@@ -1,0 +1,32 @@
+[
+  {
+    "filePath": "/proj/src/a.ts",
+    "messages": [
+      {"ruleId": "no-unused-vars", "severity": 2, "message": "'x' is defined but never used.", "line": 3, "column": 7},
+      {"ruleId": "no-unused-vars", "severity": 2, "message": "'y' is defined but never used.", "line": 5, "column": 9},
+      {"ruleId": "no-console", "severity": 1, "message": "Unexpected console statement.", "line": 7, "column": 3},
+      {"ruleId": "prefer-const", "severity": 1, "message": "'z' is never reassigned. Use 'const' instead.", "line": 10, "column": 3}
+    ],
+    "errorCount": 2,
+    "warningCount": 2
+  },
+  {
+    "filePath": "/proj/src/b.ts",
+    "messages": [
+      {"ruleId": "no-unused-vars", "severity": 2, "message": "'foo' is defined but never used.", "line": 2, "column": 1},
+      {"ruleId": "eqeqeq", "severity": 2, "message": "Expected '===' and instead saw '=='.", "line": 8, "column": 12},
+      {"ruleId": "no-var", "severity": 2, "message": "Unexpected var, use let or const instead.", "line": 1, "column": 1}
+    ],
+    "errorCount": 3,
+    "warningCount": 0
+  },
+  {
+    "filePath": "/proj/src/c.ts",
+    "messages": [
+      {"ruleId": "@typescript-eslint/no-floating-promises", "severity": 2, "message": "Promises must be awaited.", "line": 15, "column": 5},
+      {"ruleId": "unknown-rule-no-hint", "severity": 1, "message": "Some unknown warning.", "line": 20, "column": 1}
+    ],
+    "errorCount": 1,
+    "warningCount": 1
+  }
+]

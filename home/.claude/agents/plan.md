@@ -52,8 +52,24 @@ Determine a slug from the task (kebab-case, ≤ 5 words). Write `.agent/plans/<s
 - <Bullet list: what must hold true>
 
 ## Acceptance criteria
-- [ ] <Concrete, testable criterion>
-- [ ] <Another>
+
+`​`​`plan-state
+- [ ] id: a1
+  intent: <One or two sentences stating the business intent — what is true
+          when this item is met, in prose a human can read without the
+          code. Do NOT restate the test name here. Be specific about
+          behavior.>
+  tests:
+    - <path/to/test-file>::"<test name as it appears in the runner output>"
+    - <path/to/other-test>::"<another test>"
+  verify: <shell command that executes the named tests and exits 0 on pass>
+
+- [ ] id: a2
+  intent: ...
+  tests:
+    - ...
+  verify: ...
+`​`​`
 
 ## File-level changes
 For each file:
@@ -72,6 +88,28 @@ For each file:
 ## Open questions
 - <Anything unresolved; empty if all clear>
 ```
+
+**Plan-state fence rules (required for all new plans):**
+
+- The `## Acceptance criteria` section MUST contain a fenced code block
+  tagged `plan-state`. Each item has three required fields: `intent`
+  (prose business logic), `tests` (named test cases, one per indented
+  `- <path>::<name>` line), `verify` (runnable shell command).
+- `intent` should describe what's true in the system when the item is
+  met — not the implementation. A reviewer with no code context should
+  be able to read the intent and understand what's being built and why.
+- Every test named in `tests:` must either exist in the repo already,
+  or its file path must appear in `## File-level changes` (marking it
+  NEW or modified). `plan-reviewer` enforces this.
+- `verify` is a single shell command that should execute the named
+  tests. On the `qa-reviewer` pass, each pending item's verify command
+  is run via `bash`; non-zero exit fails the review.
+- Legacy plans without a fence (old `- [ ]` checkboxes directly under
+  `## Acceptance criteria`) still execute and pass review — the fence
+  is required only for NEW plans.
+- The plan-check tool at `~/.claude/bin/plan-check.sh` parses the fence
+  and can emit verify commands for execution (`--run`) or validate
+  structure (`--check`).
 
 ## 5. Adversarial review
 
