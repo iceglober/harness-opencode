@@ -8,11 +8,11 @@ Part of the `glorious` ecosystem — installs alongside other `glorious-*` tools
 
 - **Primary agents** — `orchestrator` (five-phase end-to-end), `plan` (interactive planner), `build` (plan executor)
 - **Subagents** — `gap-analyzer`, `plan-reviewer`, `qa-reviewer`, `autopilot-verifier`, `code-searcher`, `lib-reader`, `architecture-advisor`, `agents-md-writer`, `docs-maintainer`
-- **Slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`, `/fresh`
+- **Slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`, `/fresh`, `/costs`
 - **Generic skills** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
 - **OpenCode tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`
 - **OpenCode plugins**
-  - Local: `notify` (OS notifications for question tool), `autopilot` (completion-tag loop driver with skeptical verifier gate), `auto-update` (opportunistic self-update at session start — see [docs/installation.md#auto-update](docs/installation.md#auto-update))
+  - Local: `notify` (OS notifications for question tool), `autopilot` (completion-tag loop driver with skeptical verifier gate), `auto-update` (opportunistic self-update at session start — see [docs/installation.md#auto-update](docs/installation.md#auto-update)), `cost-tracker` (running LLM spend by provider/model at `~/.glorious/opencode/costs.json`; view with `/costs`; disable with `GLORIOUS_COST_TRACKER=0`, override path with `GLORIOUS_COST_TRACKER_DIR`)
   - npm-delivered: [`opencode-hashline`](https://www.npmjs.com/package/opencode-hashline) (installed automatically into `~/.config/opencode/node_modules/`)
 - **MCP server wiring** — `serena` (AST code intel), `memory` (per-repo JSON memory, worktree-shared), `git` (structured blame/log). `playwright` and `linear` defined but disabled — flip a flag to enable.
 - **Claude Code parity** — tool-parity table so agents fall back gracefully on Claude Code (no `tsc_check`? use the project's typecheck command via bash. No Serena? use `grep`.)

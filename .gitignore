@@ -24,3 +24,11 @@ home/.config/opencode/node_modules
 # this repo write to .agent/ per their own convention; it's never part of a
 # PR's payload.
 .agent/
+
+# Cost-tracker plugin data. Default location is ~/.glorious/opencode/, which
+# is this checkout when contributors work against a local clone. Ignored so
+# running a session in-tree doesn't dirty the working tree. User-overridable
+# via GLORIOUS_COST_TRACKER_DIR.
+/costs.json
+/costs.jsonl
+/costs.json.tmp.*
