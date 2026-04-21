@@ -48,6 +48,8 @@ For each item in `## File-level changes`:
 3. If a test fails, fix it before moving on.
 4. Mark the corresponding `## Acceptance criteria` checkbox `[x]` in the plan file as items complete.
 
+**Fenced plans — TDD order.** If the plan's `## Acceptance criteria` contains a ```plan-state fence, work item-by-item in TDD order: for each acceptance item, write the test(s) named in its `tests:` field FIRST (they must fail initially), then implement the change that makes them pass, then confirm by running the item's `verify:` command. Only mark the fence item `- [x]` after the verify command exits 0. This is how fenced plans encode strict TDD — the `tests:` field is the spec; the code is secondary.
+
 When you discover the plan is wrong:
 - STOP.
 - Report the discrepancy with specifics.
