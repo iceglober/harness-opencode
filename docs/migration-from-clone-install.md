@@ -7,7 +7,7 @@ If you were using the previous `install.sh`-based harness (the `~/.glorious/open
 The final version of the old installer is tagged `v0-legacy-clone-install`. Download and run the uninstaller:
 
 ```bash
-curl -fsSL https://github.com/glrs-dev/harness-opencode/releases/download/v0-legacy-clone-install/uninstall.sh -o /tmp/legacy-uninstall.sh
+curl -fsSL https://github.com/iceglober/harness-opencode/releases/download/v0-legacy-clone-install/uninstall.sh -o /tmp/legacy-uninstall.sh
 bash /tmp/legacy-uninstall.sh
 ```
 

@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     # Extra guard: only run on the canonical repo, not forks.
-    if: github.repository == 'glrs-dev/harness-opencode'
+    if: github.repository == 'iceglober/harness-opencode'
     permissions:
       contents: read
       packages: write  # required for GitHub Packages publish

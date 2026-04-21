@@ -24,7 +24,7 @@ In the coming weeks, a single PR will land on `main` that:
 
 ```bash
 # Download the final-legacy uninstall.sh from the v0-legacy-clone-install release
-curl -fsSL https://github.com/glrs-dev/harness-opencode/releases/download/v0-legacy-clone-install/uninstall.sh -o /tmp/legacy-uninstall.sh
+curl -fsSL https://github.com/iceglober/harness-opencode/releases/download/v0-legacy-clone-install/uninstall.sh -o /tmp/legacy-uninstall.sh
 bash /tmp/legacy-uninstall.sh
 ```
 
