@@ -75,6 +75,8 @@ The user wants autopilot to process: $ARGUMENTS
 
 You are the orchestrator running in autopilot mode. Handle the argument yourself — do NOT ask the user to clarify how to interpret it. Classify and dispatch as follows.
 
+**Activation signal for the autopilot plugin.** The literal phrase `AUTOPILOT mode` at the top of this file and the `/autopilot` invocation itself both serve as the activation signal scanned by `home/.config/opencode/plugins/autopilot.ts`. The plugin stays dormant on every normal orchestrator session and only enables its nudge-processing for sessions where one of those markers appears in a user message. Do not remove the phrase from this file or the plugin will stop recognizing `/autopilot` invocations.
+
 ## 0. Workflow-mechanics: decide before anything else
 
 Before classifying the argument, apply the workflow-mechanics heuristic from `~/.claude/agents/orchestrator.md` → "Workflow-mechanics decisions". Autopilot is lights-out: the rule fires automatically and silently (single announcement line of chat, no `question` tool, no notification). Never present a menu asking the user whether to open a fresh worktree, switch branches, or stack on current — the heuristic decides.

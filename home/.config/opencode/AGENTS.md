@@ -98,6 +98,17 @@ Announcement format: plain chat, prefixed `→ Workflow:`. No `question` tool, n
 
 Rationale: every second the user spends tabbing back to approve "which branch?" is a second stolen from the reason they ran autopilot. The question tool is for decisions only a human can make; branch placement isn't one of them.
 
+## Autopilot activation
+
+The `autopilot.ts` plugin is **opt-in**. It stays dormant on every normal orchestrator or build session and only enables its nudge-processing when one of these activation signals is detected:
+
+1. **Explicit `/autopilot` invocation.** The slash-command text appears in a user message as `/autopilot`, and `home/.claude/commands/autopilot.md` also emits the literal phrase `AUTOPILOT mode` into the orchestrator's prompt. The plugin scans for either marker in any user message.
+2. **Fresh-handoff transition.** A freshly-written `.agent/fresh-handoff.md` (mtime advanced, iterations still 0) implies autopilot — `/plan-loop` is the only writer of that file and exists to hand off to autopilot runs.
+
+If neither signal is present, the plugin observes `session.idle` and `chat.message` events and does nothing. A plain orchestrator session with a plan full of unchecked acceptance criteria will never receive an `[autopilot]` nudge — nudges require explicit activation.
+
+Once activated, the `enabled` flag on the session's state is sticky: user messages reset the iteration counter (the user's input always wins over in-flight verification state), but they do not disable autopilot. The only exits are max-iteration cap, successful completion, or ending the session. All nudges are debounced (30s) to prevent duplicate fires under rapid idle events.
+
 ## Autopilot completion protocol
 
 When running under `/autopilot`, the orchestrator signals Phase-4 completion by emitting the literal ASCII token `<promise>DONE</promise>` on its own line. The `autopilot.ts` plugin detects that tag and injects a continuation prompt asking the orchestrator to delegate to the `@autopilot-verifier` subagent. The verifier returns exactly one of two sentinel tokens on its own line at the start of its response: `[AUTOPILOT_VERIFIED]` (proceed to Phase 5 handoff) or `[AUTOPILOT_UNVERIFIED]` followed by numbered reasons (orchestrator addresses each literally and re-emits `<promise>DONE</promise>`). The contract is "treat the verifier's verdict as ground truth; do not argue" — if the verifier rejects, fix the work, do not rebut. Sentinels are case-sensitive and must appear as the first non-whitespace content on their line; the plugin scans for them only after the DONE-promise message to avoid user-quoted-transcript false positives. The human gate remains `/ship` — the verifier's `[AUTOPILOT_VERIFIED]` unlocks the Phase-5 handoff message, not an auto-ship.

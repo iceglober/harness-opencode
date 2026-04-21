@@ -134,50 +134,55 @@ If the request itself is genuinely unclear — you can't tell whether the user w
 
 ## Phase 2: Plan
 
-For substantial work:
+For substantial work, do NOT write the plan yourself. Plan authoring is `@plan`'s job — it runs its own interview/grounding/gap-analyzer/reviewer loop in an isolated context, so your investigation context doesn't drown the drafting. Your job in Phase 2 is to gather enough context that `@plan` can draft without re-doing your work, then delegate.
 
-1. **Interview the user.** Ask 2-4 targeted questions to clarify intent, constraints, acceptance criteria. Stop interviewing once you have enough to draft. Do not over-ask.
+1. **Interview the user.** Ask 2-4 targeted questions to clarify intent, constraints, acceptance criteria. Stop interviewing once you have enough to hand off. Do not over-ask. (If `@plan` needs more from the user, it will interview further on its own.)
 
-2. **Ground in the codebase.** For TypeScript symbol/function lookups, use Serena MCP tools FIRST (`serena_find_symbol`, `serena_get_symbols_overview`, `serena_find_referencing_symbols`) — they're more precise than grep and return structured results. Fall back to `read`, `grep`, `glob`, `ast_grep` for textual patterns, config files, non-TS languages, or broad sweeps. Delegate to `@code-searcher` for large scans that would pollute your context. The plan must reference real file paths and real symbol names. Never invent.
+2. **Ground in the codebase.** For TypeScript symbol/function lookups, use Serena MCP tools FIRST (`serena_find_symbol`, `serena_get_symbols_overview`, `serena_find_referencing_symbols`) — they're more precise than grep and return structured results. Fall back to `read`, `grep`, `glob`, `ast_grep` for textual patterns, config files, non-TS languages, or broad sweeps. Delegate to `@code-searcher` for large scans that would pollute your context. The grounding you hand to `@plan` must reference real file paths and real symbol names. Never invent.
 
-3. **Pre-draft gap analysis.** Delegate to `@gap-analyzer` via the task tool. Provide the user's request and your current understanding. Incorporate the returned gaps before drafting. Also run `comment_check` (with `includeAge: true`) on the directories the plan will touch; surface any `@TODO`/`@FIXME`/`@HACK` older than 30 days in the plan's `## Open questions` section as "Existing debt to consider: <annotation>".
+3. **Delegate to `@plan` via the task tool.** Pass a single `prompt` string packed with:
 
-4. **Write the plan.** Determine a slug (kebab-case, ≤ 5 words). Write `.agent/plans/<slug>.md` with this exact structure:
+   - The user's original request (verbatim)
+   - Any interview answers you gathered
+   - A short grounding summary: the real files/symbols that will change, relevant patterns, constraints you already know
+   - Any explicit open questions or options you want the plan to resolve
 
-   ```markdown
-   # <Title>
+   `@plan` returns the plan path (`.agent/plans/<slug>.md`). It handles gap-analysis, drafting, and `@plan-reviewer` adversarial review internally. Do not call `@gap-analyzer` or `@plan-reviewer` yourself — `@plan` owns that loop.
 
-   ## Goal
-   <One paragraph: what this accomplishes and why.>
+4. **Inform the user.** "Plan written to `.agent/plans/<slug>.md` and reviewed. Proceeding to implementation. I'll report back when QA passes."
 
-   ## Constraints
-   - <Bullet list>
+   Do NOT ask for permission to proceed. The plan is the contract; once `@plan` returns a reviewed path, execute it. The user can interrupt at any time by typing.
 
-   ## Acceptance criteria
-   - [ ] <Concrete, testable criterion>
-   - [ ] <Another>
+For reference (you do NOT write this — `@plan` does), the plan file follows this structure, which you'll read in Phase 3:
 
-   ## File-level changes
-   ### <relative/path/to/file>
-   - Change: <what>
-   - Why: <one sentence>
-   - Risk: <none | low | medium | high>
+```markdown
+# <Title>
 
-   ## Test plan
-   - <Specific tests to add or update>
+## Goal
+<One paragraph: what this accomplishes and why.>
 
-   ## Out of scope
-   - <Things explicitly not done>
+## Constraints
+- <Bullet list>
 
-   ## Open questions
-   - <Anything unresolved; empty if all clear>
-   ```
+## Acceptance criteria
+- [ ] <Concrete, testable criterion>
+- [ ] <Another>
 
-5. **Adversarial review.** Delegate to `@plan-reviewer`. On `[REJECT]`, fix issues and re-delegate. No retry limit. Do not proceed until `[OKAY]`.
+## File-level changes
+### <relative/path/to/file>
+- Change: <what>
+- Why: <one sentence>
+- Risk: <none | low | medium | high>
 
-6. **Inform the user.** "Plan written to `.agent/plans/<slug>.md` and reviewed. Proceeding to implementation. I'll report back when QA passes."
+## Test plan
+- <Specific tests to add or update>
 
-   Do NOT ask for permission to proceed. The plan is the contract; once it's reviewed, execute it. The user can interrupt at any time by typing.
+## Out of scope
+- <Things explicitly not done>
+
+## Open questions
+- <Anything unresolved; empty if all clear>
+```
 
 ## Phase 3: Execute
 
@@ -245,9 +250,9 @@ STOP at Phase 5 — don't push or open a PR without the user's explicit `/ship` 
 
 # Subagent reference (recap)
 
+- `@plan` — writes `.agent/plans/<slug>.md` and runs its own gap-analysis + adversarial-review loop. Orchestrator delegates Phase 2 plan authoring here.
 - `@code-searcher` — fast codebase grep + structural search, returns paths and short snippets
 - `@lib-reader` — local-only docs/library lookups (node_modules, type defs, project docs)
-- `@gap-analyzer` — pre-draft "what did we miss"
-- `@plan-reviewer` — adversarial plan validation, returns `[OKAY]` or `[REJECT]`
-- `@qa-reviewer` — adversarial implementation review, returns `[PASS]` or `[FAIL]`
+- `@qa-reviewer` — adversarial implementation review, returns `[PASS]` or `[FAIL]`. Orchestrator calls this directly in Phase 4.
 - `@architecture-advisor` — read-only senior consultant for hard decisions
+- `@gap-analyzer`, `@plan-reviewer` — internal subagents used by `@plan`. Orchestrator does NOT invoke these directly; route plan-authoring work through `@plan` instead.
