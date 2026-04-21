@@ -1,5 +1,7 @@
 # `/fresh` — fresh worktree + repo-specific provisioning
 
+> **First-time worktree permission prompt?** See [permissions.md](permissions.md) — by default we pre-authorize `~/.glorious/worktrees/**` so `/fresh` doesn't re-prompt "Always allow" on every new worktree.
+
 `/fresh` creates a new git worktree, infers a descriptive branch name from free text or an issue-tracker reference, and dispatches to a repo-specific hook for any custom provisioning.
 
 The command itself is intentionally generic. All repo-specific logic (spinning up databases, copying config, seeding test data, etc.) lives in the consuming repo's `.glorious/hooks/fresh` executable.

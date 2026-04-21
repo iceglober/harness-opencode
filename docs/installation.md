@@ -14,7 +14,7 @@ Three directories are touched:
 2. `~/.claude/agents/`, `~/.claude/commands/`, `~/.claude/skills/` — per-file symlinks back to the checkout
 3. `~/.config/opencode/{AGENTS.md, opencode.json, tools/, plugins/}` — per-file symlinks back to the checkout
 
-Nothing else is modified. Existing files are preserved (the installer backs them up before replacing; for `opencode.json` specifically, it will never overwrite — it prints a diff command instead).
+Nothing else is modified. Existing files are preserved (the installer backs them up before replacing). For `opencode.json` specifically, the installer merges missing keys from our shipped version into yours non-destructively — user values win, we only add what's absent, and a timestamped `.bak` sibling is written before every mutation. See [permissions.md](permissions.md) for the default `permission.external_directory` entry we ship and how to opt out.
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ Both ship disabled in the global `opencode.json`. To enable, either:
 
 The `hashline_edit` tool (hash-based safe line edits) is provided by the `opencode-hashline` plugin. The installer adds it to its shipped `opencode.json` automatically, so if you're using that file you have nothing to do.
 
-**If you kept your own `~/.config/opencode/opencode.json`** (the installer refused to overwrite it), you need to include `opencode-hashline` in the `plugin` array yourself, otherwise the `hashline_edit` tool won't load at runtime. Minimum change:
+**If you kept your own `~/.config/opencode/opencode.json`** (the installer merged into it rather than symlinking), the merge should have appended `opencode-hashline` to your `plugin` array automatically. If for some reason it's still missing (e.g., your `plugin` was a scalar, not an array — one of the [scalar-vs-object](permissions.md#scalar-vs-object-collisions) cases the merge deliberately doesn't auto-migrate), add it manually:
 
 ```json
 {
@@ -172,7 +172,8 @@ This removes only the symlinks recorded in `.manifest`. Real files you added (e.
 | Symptom | Fix |
 |---|---|
 | `uvx: command not found` | `brew install uv` (macOS) or `pipx install uv` |
-| `opencode.json was not created by this installer — not touching it` | Diff the installer's version: `diff ~/.glorious/opencode/home/.config/opencode/opencode.json ~/.config/opencode/opencode.json`. Merge manually, or rename your existing one and re-run the installer. |
+| `/fresh` still re-prompts "Always allow" | The shipped default sets `permission.external_directory` for `~/.glorious/worktrees/**`. Confirm it landed: `grep -A2 external_directory ~/.config/opencode/opencode.json`. If missing and the file is a real (non-symlinked) file, check that the installer's merge ran cleanly — see the doctor output on the last run. Full details in [permissions.md](permissions.md). |
+| Installer merged into my `opencode.json` and I want to undo it | A `.bak.<epoch>-<pid>` sibling was written before every mutation: `ls ~/.config/opencode/opencode.json.bak.*`. Restore with `mv ~/.config/opencode/opencode.json.bak.<stamp> ~/.config/opencode/opencode.json`. |
 | Agents don't load in Claude Code | Confirm `~/.claude/agents/` contains symlinks to the repo. Claude Code caches — restart the session. |
 | Agents don't load in OpenCode | Confirm `~/.config/opencode/opencode.json` references the agent prompts correctly. `opencode debug config` will show the resolved config. |
 | "permission denied" on install.sh | Run with `bash install.sh` instead of `./install.sh`, or `chmod +x install.sh` first. |

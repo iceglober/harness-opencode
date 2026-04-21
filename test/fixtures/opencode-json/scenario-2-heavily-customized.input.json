@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "plan",
+  "autoupdate": false,
+  "plugin": ["some-user-plugin", "another-user-plugin"],
+  "formatter": {
+    "prettier": {
+      "disabled": true
+    }
+  },
+  "agent": {
+    "reviewer": {
+      "description": "User-defined review-only agent",
+      "mode": "subagent",
+      "model": "anthropic/claude-haiku-4-5",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    }
+  },
+  "permission": {
+    "bash": {
+      "*": "ask"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "plugin": ["opencode-hashline"],
+  "permission": {{{ this is not valid JSON
+}

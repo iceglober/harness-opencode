@@ -165,6 +165,155 @@ link_file() {
   run ln -s "$src" "$dst"
 }
 
+# -------- merge helper for opencode.json --------
+# Usage: merge_opencode_json SRC DST
+#
+# Non-destructive deep-merge of the shipped SRC into a user-customized DST.
+# Policy codified in ../test/inline-merge.js and documented in AGENTS.md §"Rules
+# when editing this repo" rule 4. Bash is a dumb dispatcher — node owns the
+# transaction (backup + tempfile + rename).
+#
+# Symlink handling:
+#   - DST missing or is our symlink      → defer to link_file (no merge).
+#   - DST is a symlink pointing elsewhere → follow the chain to a real file;
+#                                           merge into that target (NOT the symlink).
+#                                           If the chain dead-ends at a missing path, bail.
+#   - DST is a real file                  → merge in place.
+#
+# On scalar-vs-object collisions, node emits WARN: lines and does not mutate.
+# Exit 42 from node = "no merge needed"; any other non-zero = fatal.
+#
+# Requires `node`. If missing while merge is needed, exits with a clear error.
+#
+# Portable realpath resolver (no readlink -f — BSD). Follows up to $max hops to
+# avoid cycles; stops when target is not a symlink or doesn't exist.
+_resolve_symlink_chain() {
+  local path="$1"
+  local max=16
+  local hops=0
+  while [[ -L "$path" ]]; do
+    if (( hops >= max )); then
+      err "symlink chain at $1 exceeds $max hops — refusing to resolve"
+      return 1
+    fi
+    local target
+    target="$(readlink "$path")"
+    # If relative, resolve relative to the link's directory.
+    if [[ "$target" != /* ]]; then
+      target="$(dirname "$path")/$target"
+    fi
+    path="$target"
+    hops=$((hops + 1))
+  done
+  printf "%s\n" "$path"
+}
+
+merge_opencode_json() {
+  local src="$1" dst="$2"
+  local dst_dir; dst_dir="$(dirname "$dst")"
+  [[ -d "$dst_dir" ]] || run mkdir -p "$dst_dir"
+
+  # Case A: DST missing. Defer to link_file.
+  if [[ ! -e "$dst" && ! -L "$dst" ]]; then
+    link_file "$src" "$dst"
+    MANIFEST_ENTRIES+=("$dst")
+    return
+  fi
+
+  # Case A (cont.): DST is our symlink already. No-op.
+  if [[ -L "$dst" ]]; then
+    local cur; cur="$(readlink "$dst")"
+    if [[ "$cur" == "$src" ]]; then
+      say "  ${c_dim}= $dst (already linked)${c_reset}"
+      MANIFEST_ENTRIES+=("$dst")
+      return
+    fi
+  fi
+
+  # Case B / D: DST is a symlink elsewhere. Follow it.
+  local merge_target="$dst"
+  if [[ -L "$dst" ]]; then
+    local resolved
+    if ! resolved="$(_resolve_symlink_chain "$dst")"; then
+      err "failed to resolve symlink chain from $dst"
+      exit 1
+    fi
+    if [[ ! -e "$resolved" ]]; then
+      err "symlink at $dst points at missing path $resolved"
+      err "refusing to create files in unknown locations"
+      err "fix: remove the stale symlink (rm '$dst') and re-run install.sh"
+      exit 1
+    fi
+    # If the chain happens to terminate at our source file (e.g., a user-built
+    # symlink that ultimately points back at our shipped config), that's the
+    # same as Case A — no merge needed, it's already our file.
+    if [[ "$resolved" == "$src" ]]; then
+      say "  ${c_dim}= $dst (already links to our source via chain)${c_reset}"
+      MANIFEST_ENTRIES+=("$dst")
+      return
+    fi
+    info "  Following $dst → $resolved for merge"
+    merge_target="$resolved"
+  fi
+
+  # Case C: real file at merge_target. Require node.
+  if ! command -v node >/dev/null 2>&1; then
+    err "opencode.json at $merge_target is a real file and needs a non-destructive merge,"
+    err "but 'node' is not on PATH. Options:"
+    err "  1. Install Node.js (brew install node / apt install nodejs) and re-run install.sh."
+    err "  2. Restore our shipped version: mv '$merge_target' '${merge_target}.bak' && ln -s '$src' '$merge_target'"
+    exit 1
+  fi
+
+  local merge_script="${SRC_ROOT}/test/inline-merge.js"
+  if [[ ! -f "$merge_script" ]]; then
+    err "merge script not found at $merge_script"
+    err "this is a repo bug — the inline-merge.js file should ship with install.sh"
+    exit 1
+  fi
+
+  if [[ "$DRY_RUN" == 1 ]]; then
+    printf "  ${c_dim}[dry-run]${c_reset} node %s %s %s 1\n" "$merge_script" "$src" "$merge_target"
+    # Actually run the dry-run merge — it prints proposed changes to stderr and
+    # does not touch disk. Harmless to run in --dry-run.
+    local rc=0
+    node "$merge_script" "$src" "$merge_target" 1 || rc=$?
+    case "$rc" in
+      0) info "  [dry-run] merge would add keys (see above)" ;;
+      42) say "  ${c_dim}= $merge_target (no merge needed)${c_reset}" ;;
+      *) err "  [dry-run] merge script exited $rc"; exit "$rc" ;;
+    esac
+    MANIFEST_ENTRIES+=("$dst")
+    return
+  fi
+
+  # Real run. Capture stdout (backup path) separately from stderr (warnings + additions).
+  local bak_path
+  local rc=0
+  bak_path="$(node "$merge_script" "$src" "$merge_target" 0)" || rc=$?
+  case "$rc" in
+    0)
+      if [[ -n "$bak_path" ]]; then
+        ok "  Merged keys into $merge_target"
+        info "  Backup: $bak_path"
+        info "  To revert: mv '$bak_path' '$merge_target'"
+      else
+        # Scalar-only warnings case: no additions, no backup, but node exited 0.
+        # Shouldn't happen given our exit-42 contract, but handle defensively.
+        info "  Merge completed with warnings only (see above)"
+      fi
+      ;;
+    42)
+      say "  ${c_dim}= $merge_target (no merge needed)${c_reset}"
+      ;;
+    *)
+      err "  merge script exited $rc; see messages above"
+      exit "$rc"
+      ;;
+  esac
+  MANIFEST_ENTRIES+=("$dst")
+}
+
 # -------- link per-file --------
 declare -a MANIFEST_ENTRIES=()
 
@@ -224,6 +373,15 @@ step "Handling ${OC_DIR}/opencode.json, AGENTS.md, package.json"
 for base in "opencode.json" "AGENTS.md" "package.json"; do
   src="${SRC_OC}/${base}"
   dst="${OC_DIR}/${base}"
+  # opencode.json has special non-destructive merge semantics — see
+  # merge_opencode_json() above and AGENTS.md §"Rules when editing this repo" rule 4.
+  if [[ "$base" == "opencode.json" ]]; then
+    merge_opencode_json "$src" "$dst"
+    continue
+  fi
+  # AGENTS.md and package.json keep the original warn-and-skip behavior.
+  # Both are hard to merge safely: markdown isn't machine-mergeable, and
+  # package.json deep-merge risks semver conflicts.
   if [[ ! -e "$dst" && ! -L "$dst" ]]; then
     link_file "$src" "$dst"
     MANIFEST_ENTRIES+=("$dst")
@@ -234,16 +392,6 @@ for base in "opencode.json" "AGENTS.md" "package.json"; do
     warn "  ! $dst exists and was not created by this installer."
     warn "    Not touching it. Compare with: diff '$src' '$dst'"
     warn "    To adopt the glorious-opencode version, run: mv '$dst' '${dst}.bak' && ln -s '$src' '$dst'"
-    # If the user kept their own opencode.json but forgot to include the
-    # hashline plugin, the install "succeeds" but hashline_edit is unavailable
-    # at runtime. Warn loudly. Grep-based check — jq isn't a prereq, and a
-    # bare substring match is sufficient for this tripwire. See issue #3.
-    if [[ "$base" == "opencode.json" ]] && ! grep -q "opencode-hashline" "$dst"; then
-      warn "    Your '$dst' does not include \"opencode-hashline\" in its plugin array."
-      warn "    The hashline_edit tool will not load until you add it. Minimum change:"
-      warn "        \"plugin\": [\"opencode-hashline\", ...your other plugins...]"
-      warn "    See: https://github.com/iceglober/glorious-opencode/blob/main/docs/installation.md#enabling-hashline"
-    fi
   fi
 done
 
@@ -345,15 +493,39 @@ else
   warn "opencode-hashline NOT installed — hashline_edit tool won't be available. Run: cd '${OC_DIR}' && npm install"
 fi
 
-# Distinct from the check above: hashline can be on disk in node_modules
-# but still unloaded at runtime if the user's own opencode.json doesn't
-# list it in the "plugin" array. Both warnings can co-fire. See issue #3.
-if [[ -f "${OC_DIR}/opencode.json" && ! -L "${OC_DIR}/opencode.json" ]] \
-   && ! grep -q "opencode-hashline" "${OC_DIR}/opencode.json"; then
-  warn "opencode-hashline missing from the plugin array in '${OC_DIR}/opencode.json'"
-  warn "  → hashline_edit will not load at runtime. Add \"opencode-hashline\" to the \"plugin\" array."
-  warn "  → See: docs/installation.md#enabling-hashline"
+# Doctor checks for the resolved opencode.json (follows symlinks). Covers both
+# the fresh-install symlinked case and the user-customized-real-file case.
+# Merge should have added our keys where missing, but a pre-existing scalar
+# collision (user had "external_directory": "ask") is preserved-as-scalar and
+# we warn here so the user sees the skipped-fix reason in the summary.
+_doctor_oc_path="${OC_DIR}/opencode.json"
+if [[ -L "$_doctor_oc_path" ]]; then
+  _doctor_oc_resolved="$(_resolve_symlink_chain "$_doctor_oc_path" 2>/dev/null || true)"
+else
+  _doctor_oc_resolved="$_doctor_oc_path"
 fi
+if [[ -f "$_doctor_oc_resolved" ]]; then
+  # hashline presence (in the "plugin" array). Substring match is sufficient —
+  # jq isn't a prereq and "opencode-hashline" is unambiguous in this file.
+  if ! grep -q "opencode-hashline" "$_doctor_oc_resolved"; then
+    warn "opencode-hashline missing from the plugin array in '$_doctor_oc_resolved'"
+    warn "  → hashline_edit will not load at runtime. Add \"opencode-hashline\" to the \"plugin\" array."
+    warn "  → See: docs/installation.md#enabling-hashline"
+  else
+    ok "opencode-hashline present in opencode.json"
+  fi
+  # external_directory + worktrees glob (fixes #20). Must co-occur — either
+  # key alone is suspicious.
+  if grep -q "external_directory" "$_doctor_oc_resolved" \
+     && grep -q ".glorious/worktrees" "$_doctor_oc_resolved"; then
+    ok "worktree paths pre-authorized via permission.external_directory"
+  else
+    warn "permission.external_directory with '~/.glorious/worktrees/**': 'allow' missing from '$_doctor_oc_resolved'"
+    warn "  → /fresh worktrees will re-prompt \"Always allow\" until this is added."
+    warn "  → See: docs/permissions.md"
+  fi
+fi
+unset _doctor_oc_path _doctor_oc_resolved
 
 step "Done."
 say ""

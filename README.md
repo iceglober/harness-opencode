@@ -18,6 +18,7 @@ Part of the `glorious` ecosystem — installs alongside other `glorious-*` tools
 - **Claude Code parity** — tool-parity table so agents fall back gracefully on Claude Code (no `tsc_check`? use the project's typecheck command via bash. No Serena? use `grep`.)
 - **Hashline edit system** — line-reference prefixes that validate content hashes before every edit. No more stale-line errors.
 - **Tracker/host-agnostic commands** — `/autopilot`, `/review`, `/ship` detect and use whatever issue tracker (Linear, GitHub, Jira, Atlassian, …) and git host (GitHub, GitLab, Bitbucket, Gitea) you have configured. No hardcoding, no "Linear-only" surprises.
+- **Pre-authorized worktree paths** — global `permission.external_directory` default allows `~/.glorious/worktrees/**` so `/fresh` doesn't re-prompt "Always allow" on every new worktree. See [docs/permissions.md](docs/permissions.md).
 
 ## Install
 
@@ -50,7 +51,7 @@ Both methods produce the same layout:
 
 ~/.config/opencode/
 ├── AGENTS.md       ← symlink
-├── opencode.json   ← symlink (IF you had no existing one; see below)
+├── opencode.json   ← symlink (or merged real file if you customized yours — see below)
 ├── package.json    ← symlink (dependencies for npm-delivered plugins)
 ├── node_modules/   ← created by `npm install` / `bun install` at install time
 ├── tools/          ← symlinks …
@@ -59,7 +60,7 @@ Both methods produce the same layout:
 
 ### What the installer won't do
 
-- **Never clobbers your existing `~/.config/opencode/opencode.json`.** If you already have one, the installer leaves it alone and prints the diff command so you can merge manually.
+- **Never overwrites your `~/.config/opencode/opencode.json` values.** If you have an existing one, the installer *merges* missing keys from our shipped version into yours non-destructively — user values always win, we only add what's absent, and a `.bak.<epoch>-<pid>` sibling is written before every mutation. See [docs/permissions.md](docs/permissions.md) for what gets merged and [AGENTS.md](AGENTS.md) for the full merge policy.
 - **Never touches other `glorious-*` tools** living under `~/.glorious/`.
 - **Per-file symlinks.** Any custom agent or command you drop into `~/.claude/agents/` sits happily alongside the managed ones. Only the files the installer created are tracked in `.manifest` — that's all the uninstaller will remove.
 

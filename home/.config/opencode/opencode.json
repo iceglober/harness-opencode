@@ -171,6 +171,9 @@
       "*.env": "deny",
       ".env": "deny",
       "secrets/**": "deny"
+    },
+    "external_directory": {
+      "~/.glorious/worktrees/**": "allow"
     }
   }
 }
