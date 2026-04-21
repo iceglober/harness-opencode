@@ -5,10 +5,6 @@ on:
     branches: [main]
   pull_request:
 
-# Minimum-viable gate for a curl-installable shell tool. Catches the
-# regressions that have actually burned us (see #8) without stepping into
-# the territory of a full integration-test matrix (that's #1). Keep this
-# workflow boring; reach for #1 when you need scenario coverage.
 jobs:
   checks:
     strategy:
@@ -20,64 +16,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The exec bit on install.sh / uninstall.sh / update.sh has regressed
-      # silently before (d6c5311 → 6603b67). The working-tree bit is
-      # unreliable across filesystems; the source of truth is the index.
-      - name: Check exec bits on installer scripts
-        shell: bash
-        run: |
-          set -e
-          fail=0
-          for f in install.sh uninstall.sh update.sh; do
-            mode=$(git ls-files --stage -- "$f" | awk '{print $1}')
-            if [[ -z "$mode" ]]; then
-              echo "::error file=$f::not tracked by git"
-              fail=1
-              continue
-            fi
-            if [[ "$mode" != "100755" ]]; then
-              echo "::error file=$f::mode is $mode, expected 100755"
-              echo "::error file=$f::fix with: git update-index --chmod=+x $f && git commit --amend --no-edit"
-              fail=1
-            else
-              echo "ok: $f ($mode)"
-            fi
-          done
-          exit "$fail"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      # Pin shellcheck to an explicit version on both runners so the matrix
-      # reports consistent findings. Downloading the official release tarball
-      # avoids depending on package-manager-shipped versions (ubuntu-latest
-      # bundles ~0.8.x; macos-latest doesn't ship it at all). Version skew
-      # is exactly the silent-divergence class this workflow exists to prevent.
-      - name: Install shellcheck (pinned to v0.10.0)
-        shell: bash
-        run: |
-          set -e
-          SC_VERSION="v0.10.0"
-          case "${{ runner.os }}" in
-            Linux) SC_ARCH="linux.x86_64" ;;
-            macOS) SC_ARCH="darwin.aarch64" ;;
-            *) echo "Unsupported runner OS: ${{ runner.os }}"; exit 1 ;;
-          esac
-          url="https://github.com/koalaman/shellcheck/releases/download/${SC_VERSION}/shellcheck-${SC_VERSION}.${SC_ARCH}.tar.xz"
-          tmp="$(mktemp -d)"
-          curl -fsSL "$url" | tar -xJ -C "$tmp"
-          sudo mv "$tmp/shellcheck-${SC_VERSION}/shellcheck" /usr/local/bin/shellcheck
-          shellcheck --version | head -2
+      - name: Install dependencies
+        run: bun install
 
-      - name: shellcheck
-        shell: bash
-        run: shellcheck install.sh uninstall.sh update.sh
+      - name: Typecheck
+        run: bun run typecheck
 
-      # Smoke-test the installer's dry-run path. This does not exercise the
-      # symlink-creation or npm-install steps (those would need scenario
-      # setup — issue #1); it just catches syntactic breakage and missing
-      # source files.
-      - name: Dry-run install smoke test
-        shell: bash
-        run: |
-          set -e
-          prefix="$RUNNER_TEMP/goc-smoke"
-          mkdir -p "$prefix"
-          bash install.sh --dry-run --prefix "$prefix"
+      - name: Build
+        run: bun run build
+
+      - name: Test
+        run: bun test
+
+      - name: Publish dry-run
+        run: npm publish --dry-run

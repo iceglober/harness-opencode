@@ -1,3 +1,8 @@
+# npm package artifacts (never checked in)
+node_modules/
+dist/
+*.tgz
+
 # Install-time artifacts (never checked in)
 .manifest
 
