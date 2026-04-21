@@ -133,6 +133,7 @@ The installer's doctor step reports which of these are missing.
 - **Context isolation via subagents.** Large searches, planning, QA runs happen in subagent contexts so the orchestrator's context stays lean.
 - **Human gate = `/ship`.** Agents commit freely, but never push or open PRs until you explicitly run `/ship`. Hard rules: no force push, no push to main/master, no merging without explicit user consent.
 - **Question tool > free-text asks.** When an agent needs clarification, it fires an OS notification via the `question` tool so users who stepped away actually see it.
+- **Agents auto-isolate; no workflow-mechanics prompts.** Branch placement, worktree isolation, "should I start here or fresh?" — the agent decides, announces the decision in one line of chat, and proceeds. On `main`, substantial work triggers `/fresh` automatically (or a new local branch if `gsag` isn't installed). On a feature branch with unrelated work, the agent switches to a new branch from the default. Trivial one-line changes stay on whatever branch you're on. Dirty working trees abort with a clear message so nothing gets silently stashed. See `~/.claude/agents/orchestrator.md` → "Workflow-mechanics decisions" for the full heuristic. `/fresh` and `/ship` are still interactive — they're user-invoked, not agent-initiated.
 - **Probe, don't prescribe.** Commands detect whatever tracker/host/language toolchain you have and adapt. Agents don't assume `pnpm` or `gh` or Linear — they discover from `package.json`, `git remote`, configured MCPs.
 
 ## Repo-specific extensions

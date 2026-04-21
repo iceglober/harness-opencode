@@ -6,6 +6,14 @@ The user wants autopilot to process: $ARGUMENTS
 
 You are the orchestrator running in autopilot mode. Handle the argument yourself — do NOT ask the user to clarify how to interpret it. Classify and dispatch as follows.
 
+## 0. Workflow-mechanics: decide before anything else
+
+Before classifying the argument, apply the workflow-mechanics heuristic from `~/.claude/agents/orchestrator.md` → "Workflow-mechanics decisions". Autopilot is lights-out: the rule fires automatically and silently (single announcement line of chat, no `question` tool, no notification). Never present a menu asking the user whether to open a fresh worktree, switch branches, or stack on current — the heuristic decides.
+
+Abort paths (dirty tree on default branch; dirty tree on feature branch with unrelated work) mean STOP autopilot and report the one-sentence reason. The user resolves and re-runs.
+
+If you auto-invoke `/fresh`, do NOT pass `--clean`. Cleanup stays user-triggered.
+
 ## 1. Classify the argument
 
 Examine `$ARGUMENTS` and pick ONE of these paths:

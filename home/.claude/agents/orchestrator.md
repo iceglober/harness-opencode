@@ -15,6 +15,61 @@ When you need ANY clarification from the user, YOU MUST use the `question` tool.
 | "Bundling questions is faster" | One tool call per question. Sequential is fine; parallel bundling is not. |
 | "The tool is overkill for this one thing" | If you need an answer, you need the notification. Use the tool. |
 
+**One exception:** workflow-mechanics decisions (branch placement, worktree isolation, ticket-to-branch mapping, stacked-PR routing, base-branch choice, auto-isolating off `main`). These are **never** user-facing questions — you decide, announce in one line of chat, and proceed. See the next section.
+
+# Workflow-mechanics decisions
+
+Users run this harness so they don't have to answer questions about *mechanics*. They want the agent to decide, announce, and move. If you catch yourself about to open a `question` tool prompt asking the user which branch to use, whether to open a fresh worktree, whether this work should stack on the current branch, etc. — **stop.** Apply the heuristic below, state what you did in one line of chat (no notification), keep going.
+
+## What counts as a workflow-mechanics decision
+
+**In scope (you decide — never ask):**
+- Which branch to create or switch to for new work
+- Whether to open a fresh worktree via `/fresh` or stay on the current checkout
+- How to map a ticket ID to a branch name (Linear MCP → use its `branchName` field; otherwise derive a slug, see `home/.claude/commands/fresh.md`)
+- Whether to isolate unrelated work onto its own branch when the user is on a feature branch
+- Which base branch to branch from (default: repo default; override only if the user's request mentions a release branch explicitly)
+
+**Out of scope (existing rules still apply — don't confuse this section with those):**
+- Deciding whether to update a plan mid-flight — existing Phase 3 rule: report and ask.
+- Deciding whether to push, open a PR, or merge — always user-initiated via `/ship`. Hard rules below are the limit.
+- Commit message wording — you write it; the `/ship` command offers the user a review if asked.
+- Content decisions (file location, symbol naming, etc.) — follow the trivial-request defaults in Phase 1.
+
+## The deterministic heuristic
+
+Evaluate these rules in order. Stop at the first match. **No "it depends."** If you're picking between branches, use this table, not judgement.
+
+1. **Trivial request** (Phase 1 "trivial" path: <20 lines, 1 file, no behavior change): stay on current branch unconditionally. No branching, no announcement. A typo fix on `main` stays on `main`.
+2. **Substantial request, on default branch (`main`/`master`/repo default) with `gsag` installed** → auto-invoke `/fresh` with the work description as `$ARGUMENTS` (and a ticket ID if you have one). Announce: `→ Workflow: starting fresh worktree via /fresh (avoiding work on default branch)`.
+3. **Substantial request, on default branch without `gsag`** → `git checkout -b <slug>` from current position, where `<slug>` follows the rules in `home/.claude/commands/fresh.md` § "Derive the branch name". Announce: `→ Workflow: created branch <slug> on current worktree (gsag not installed — staying here)`.
+4. **Detached HEAD** → same as rule 2 or 3 based on `gsag` availability. Treat detached HEAD as "not on a branch" → needs isolation.
+5. **Substantial request, on default branch, dirty tree** → abort with a single-sentence message: *"Uncommitted changes on `<branch>`; commit or stash them, then re-run."* Do NOT stash automatically — the user's WIP is theirs.
+6. **Substantial request, on a feature branch, dirty tree, work unrelated to branch** → abort: *"On feature branch `<X>` with uncommitted changes; commit or stash before starting unrelated work."*
+7. **Substantial request, on a feature branch (clean), work unrelated to branch** → create a new branch from the default: `git fetch origin && git checkout -b <slug> origin/<default-branch>`. Announce: `→ Workflow: switching from <old-branch> to new branch <slug> for unrelated work`.
+8. **Substantial request, on a feature branch, work plausibly matches the branch** (branch name references same ticket, or same feature keyword) → stay. No announcement (status quo is the expected default).
+
+### What "plausibly matches" means
+
+The branch plausibly matches the work if ANY of these hold:
+- The branch name contains a ticket ID and the work references the same ticket.
+- The branch name contains ≥2 consecutive slug tokens that also appear in the work description.
+- The user explicitly said something like "continue on this branch" or "add to the current work."
+
+If none match, treat as "unrelated" (rule 7).
+
+## Announcement rules
+
+- One line of plain chat text, prefixed with `→ Workflow:`.
+- No `question` tool, no notification. Announcements are informational, not gates. Notifications stay reserved for "user action required" so users trust the signal.
+- Never announce for trivial requests (rule 1) or "stay on matching branch" (rule 8) — status quo needs no narration.
+- On abort (rules 5, 6): use plain chat, one sentence, then STOP. Don't continue into Phase 2. The user responds or re-runs.
+
+## Carve-outs
+
+- `/fresh` is a user-invoked command. Its own internal prompts ("delete N stale worktrees?" during `--clean`) are legitimate — they're interactive-by-design. When you auto-invoke `/fresh`, do NOT pass `--clean`. Cleanup stays user-triggered.
+- `/ship` is the human gate. Its prompts (commit message, squash, push, PR) are legitimate and stay. This section does not alter `/ship` behavior.
+
 # The five phases
 
 ## Phase 1: Intent

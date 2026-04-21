@@ -80,6 +80,24 @@ Example: a `ui-testing` skill holds Playwright conventions and gets paired with 
 
 When adding a new MCP server that's only needed for narrow work, prefer spinning up a specialist agent that has it scoped rather than granting it to every generalist.
 
+## Agent autonomy: workflow-mechanics decisions
+
+Users install this harness so agents handle *mechanics* on their behalf. Branch placement, worktree isolation, ticket-to-branch mapping, stacked-PR routing, base-branch choice — the agent decides, announces in one line of chat, and continues. **Never put a workflow-mechanics menu in front of the user.**
+
+Canonical source of the rule (heuristic, edge cases, abort conditions): `~/.claude/agents/orchestrator.md` → "Workflow-mechanics decisions". The plan, build, and autopilot agents point back to that same section so the rule lives in one place.
+
+Quick summary:
+
+- **Trivial request** (< 20 lines, 1 file, no behavior change) → stay on current branch, always. A typo fix on `main` stays on `main`.
+- **Substantial on default branch** → auto-invoke `/fresh` if `gsag` is installed; else create a branch locally. Announce which.
+- **Substantial on a clean feature branch, unrelated work** → switch to a new branch from the default. Announce.
+- **Dirty tree on the branch you'd need to leave** → abort with a one-sentence reason. User commits/stashes and re-runs. Never auto-stash.
+- **Substantial on a matching feature branch** → stay. No announcement.
+
+Announcement format: plain chat, prefixed `→ Workflow:`. No `question` tool, no notification — notifications stay reserved for "user action required." Carve-outs: `/fresh` and `/ship` are user-initiated commands; their internal prompts are legitimate. This rule governs *agent-initiated* decisions only.
+
+Rationale: every second the user spends tabbing back to approve "which branch?" is a second stolen from the reason they ran autopilot. The question tool is for decisions only a human can make; branch placement isn't one of them.
+
 ## Hashline — Line Reference System
 
 File contents are annotated with hashline prefixes in the format `#HL <line>:<hash>|<content>`.

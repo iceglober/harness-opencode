@@ -14,6 +14,18 @@ The command itself is intentionally generic. All repo-specific logic (spinning u
 /fresh investigate perf --clean    # and prune stale worktrees after
 ```
 
+## Agent auto-invocation
+
+`/fresh` can be invoked two ways: by the user (interactive, as above) or automatically by the orchestrator / plan / build / autopilot agents when they detect the user is starting substantial work on the default branch. The auto-invocation path is governed by `~/.claude/agents/orchestrator.md` → "Workflow-mechanics decisions" — agents never ask permission first.
+
+Differences on auto-invocation:
+
+- **`--clean` is never passed.** Stale-worktree cleanup always requires an interactive user choice, so auto-invocations leave cleanup alone. Users run `/fresh --clean` themselves when they want it.
+- **`$ARGUMENTS` is the work description** (typically a ticket ID if one was passed to `/autopilot`, otherwise a short slug derived from the user's request). The hook receives the same environment variables as always — `WORKTREE_DIR`, `BRANCH_NAME`, `BASE_BRANCH`, `WORKTREE_NAME`.
+- **The auto-invocation announces once** in chat (`→ Workflow: starting fresh worktree via /fresh (avoiding work on default branch)`) and does not fire a notification. Hooks that want to announce their own side effects (ports reserved, Docker containers started) should continue to write their JSON summary to the last line of stdout; `/fresh` surfaces that in the overall summary.
+
+**Hook authors: make your hook safe to run from a non-interactive context.** In practice that means: don't prompt for input, don't assume a TTY, fail loud (non-zero exit with a clear error on stderr) rather than hanging on a read. If your hook needs a secret the user hasn't provisioned, exit non-zero with a message — `/fresh` will surface it and the user can resolve.
+
 ## The hook contract
 
 When `/fresh` finishes creating + renaming the worktree, it checks for `<new-worktree>/.glorious/hooks/fresh`. If that path exists and is executable, `/fresh` invokes it and passes:
