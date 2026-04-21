@@ -138,10 +138,30 @@ function applyConfig(config: Config): void {
     (config as any).default_agent = "orchestrator";
   }
 
-  // Permission: external_directory for worktrees (non-destructive merge)
+  // Permission: global defaults (non-destructive merge, user-wins)
   const existingPermission = (config as any).permission ?? {};
   const existingExtDir = existingPermission.external_directory ?? {};
+  const existingBash = existingPermission.bash;
   (config as any).permission = {
+    // Our defaults first — user's existing values spread last to win
+    bash: existingBash ?? {
+      // Allow everything non-destructive; deny/ask only for dangerous ops.
+      // Last matching rule wins, so put "*" first.
+      "*": "allow",
+      "git push --force*": "deny",
+      "git push --force-with-lease*": "allow",   // safe force — re-allow after --force* deny
+      "git push -f *": "deny",
+      "git push * --force*": "deny",
+      "git push * --force-with-lease*": "allow",
+      "git push * -f": "deny",
+      "git clean *": "deny",
+      "git reset --hard*": "ask",
+      "rm -rf /*": "deny",
+      "rm -rf ~*": "deny",
+      "chmod *": "deny",
+      "chown *": "deny",
+      "sudo *": "deny",
+    },
     ...existingPermission,
     external_directory: {
       "~/.glorious/worktrees/**": "allow",
