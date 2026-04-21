@@ -98,6 +98,10 @@ Announcement format: plain chat, prefixed `→ Workflow:`. No `question` tool, n
 
 Rationale: every second the user spends tabbing back to approve "which branch?" is a second stolen from the reason they ran autopilot. The question tool is for decisions only a human can make; branch placement isn't one of them.
 
+## Autopilot completion protocol
+
+When running under `/autopilot`, the orchestrator signals Phase-4 completion by emitting the literal ASCII token `<promise>DONE</promise>` on its own line. The `autopilot.ts` plugin detects that tag and injects a continuation prompt asking the orchestrator to delegate to the `@autopilot-verifier` subagent. The verifier returns exactly one of two sentinel tokens on its own line at the start of its response: `[AUTOPILOT_VERIFIED]` (proceed to Phase 5 handoff) or `[AUTOPILOT_UNVERIFIED]` followed by numbered reasons (orchestrator addresses each literally and re-emits `<promise>DONE</promise>`). The contract is "treat the verifier's verdict as ground truth; do not argue" — if the verifier rejects, fix the work, do not rebut. Sentinels are case-sensitive and must appear as the first non-whitespace content on their line; the plugin scans for them only after the DONE-promise message to avoid user-quoted-transcript false positives. The human gate remains `/ship` — the verifier's `[AUTOPILOT_VERIFIED]` unlocks the Phase-5 handoff message, not an auto-ship.
+
 ## Hashline — Line Reference System
 
 File contents are annotated with hashline prefixes in the format `#HL <line>:<hash>|<content>`.

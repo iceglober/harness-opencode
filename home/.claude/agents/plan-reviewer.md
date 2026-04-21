@@ -31,6 +31,7 @@ Read the plan at the path provided. Validate against four criteria:
 2. **Verification** — Are `## Acceptance criteria` concrete and measurable? Can a different agent verify them by running commands or reading code, without asking the planner?
 3. **Context** — Is there enough information for an executor to proceed without more than ~10% guesswork? Are file paths real (use `read`/`grep` to spot-check)?
 4. **Big picture** — Is the `## Goal` clear? Is `## Out of scope` explicit?
+5. **Scope compliance** — If `## Goal` cites a ticket ID, the plan's `## File-level changes` must not introduce files or subsystems outside the ticket's Changes / Definition of Done section, unless `## Out of scope` (or an explicit sentence in `## Goal`) justifies each expansion. Invented scope is a REJECT.
 
 Output exactly one of these two formats. Nothing else.
 
@@ -57,3 +58,4 @@ Rules:
 - Do NOT be generous. A single unchecked box on Verification is enough to reject.
 - Spot-check at least one file path from `## File-level changes` actually exists.
 - If the plan invents a symbol or function that doesn't exist in the codebase, REJECT.
+- If the plan cites a ticket and adds scope not implied by the ticket, REJECT.

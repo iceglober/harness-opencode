@@ -2,6 +2,8 @@
 description: Self-driving orchestrator run. Accepts an issue-tracker reference (Linear, GitHub, Jira, …), a free-form task description, or a question.
 ---
 
+This invocation is in AUTOPILOT mode — apply the "Autopilot mode" section of orchestrator.md.
+
 The user wants autopilot to process: $ARGUMENTS
 
 You are the orchestrator running in autopilot mode. Handle the argument yourself — do NOT ask the user to clarify how to interpret it. Classify and dispatch as follows.
@@ -94,9 +96,13 @@ When the argument names a scope containing multiple issues — a Linear project,
 
 ## 4. Autopilot guardrails
 
-- The autopilot plugin (`~/.config/opencode/plugins/autopilot.ts`) will inject continuation messages if your session goes idle mid-plan. Treat those messages as a "keep going" signal, not a command to restart from scratch.
-- The plugin caps at 10 continuation iterations; if you hit the cap, something is stuck — report specifically and ask for help.
+- **NEVER ask scoping questions.** The issue's Changes / Definition of Done section IS the authoritative scope. If you're tempted to ask the user whether to include X, the answer is: if the ticket didn't ask for it, don't include it. Pick a default, note it as a footnote, keep moving. Autopilot mode forbids the `question` tool except for one narrow case (architectural fork that blocks progress after codebase inspection, gap-analyzer consultation, and precedent search all fail to decide) — see orchestrator.md § Autopilot mode.
+- **Completion-promise protocol.** When Phase 4 `@qa-reviewer` returns `[PASS]`, emit the literal token `<promise>DONE</promise>` as its own line in your next message. Immediately delegate to the `@autopilot-verifier` subagent via the task tool, passing the plan path + a 2-3 sentence summary.
+- **Verifier verdict handling.** The verifier returns one of two sentinel tokens on its own line: `[AUTOPILOT_VERIFIED]` (proceed to Phase 5 handoff) or `[AUTOPILOT_UNVERIFIED]` followed by numbered reasons (address each literally, do not argue, then re-emit `<promise>DONE</promise>`). Treat the verifier's verdict as ground truth.
+- The autopilot plugin (`~/.config/opencode/plugins/autopilot.ts`) will inject continuation messages if your session goes idle mid-plan, drive the completion-promise → verifier loop, and cap iterations. Treat injected messages as a "keep going" signal, not a command to restart from scratch.
+- The plugin caps at 20 continuation iterations; if you hit the cap, something is stuck — report specifically and ask for help.
 - NEVER commit, push, or open a PR. That's the human gate via `/ship`.
+- NEVER invoke `/ship` yourself. Autopilot's success is reaching `[AUTOPILOT_VERIFIED]` and printing the handoff line. The user types `/ship` explicitly.
 - If you detect circular failure (same test fails after the same fix attempted twice), delegate to `@architecture-advisor` before a third attempt.
 
 ## 5. Reporting
