@@ -34,7 +34,7 @@ import costTrackerPlugin from "./plugins/cost-tracker.js";
 
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PACKAGE_NAME = "@glrs-dev/harness-opencode";
-const BUNDLED_VERSION = "0.1.0"; // updated by release pipeline
+const BUNDLED_VERSION = "0.1.1"; // updated by release pipeline
 
 function getUpdateCheckStatePath(): string {
   const cacheHome =
