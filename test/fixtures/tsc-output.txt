@@ -1,0 +1,22 @@
+src/foo.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/foo.ts(15,9): error TS2322: Type 'string' is not assignable to type 'number'.
+src/foo.ts(18,3): error TS2322: Type 'string' is not assignable to type 'number'.
+src/bar.ts(5,1): error TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'.
+src/bar.ts(22,8): error TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'.
+src/baz.ts(3,2): error TS2531: Object is possibly 'null'.
+src/qux.ts(10,4): error TS18048: 'x' is possibly 'undefined'.
+src/qux.ts(11,4): error TS18048: 'y' is possibly 'undefined'.
+src/alpha.ts(1,1): error TS2307: Cannot find module 'foo'.
+src/beta.ts(2,1): error TS2307: Cannot find module 'bar'.
+src/gamma.ts(3,1): error TS7006: Parameter 'a' implicitly has an 'any' type.
+src/delta.ts(4,1): error TS2339: Property 'x' does not exist on type 'Y'.
+src/epsilon.ts(5,1): error TS2304: Cannot find name 'xyz'.
+src/zeta.ts(6,1): error TS2532: Object is possibly 'undefined'.
+src/eta.ts(7,1): error TS18047: 'x' is possibly 'null'.
+src/theta.ts(8,1): error TS2769: No overload matches this call.
+src/iota.ts(9,1): error TS2741: Property 'foo' is missing in type 'X'.
+src/kappa.ts(10,1): error TS2739: Type 'A' is missing the following properties from type 'B'.
+src/lambda.ts(11,1): error TS2554: Expected 2 arguments, but got 1.
+src/mu.ts(12,1): error TS2551: Property 'foo' does not exist on type 'X'. Did you mean 'Foo'?
+src/nu.ts(13,1): error TS7016: Could not find a declaration file for module 'xyz'.
+src/xi.ts(14,1): error TS9999: Some unknown error code we don't have a hint for.
