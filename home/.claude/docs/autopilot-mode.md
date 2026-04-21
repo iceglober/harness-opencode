@@ -12,9 +12,9 @@ If you catch yourself composing a `question` tool call, STOP. Ask: did I actuall
 
 ## Rule 2 — Scope anchor
 
-If the triggering message cites a ticket ID (Linear, GitHub, Jira, etc.) and you fetched it via step 2 of `/autopilot`, the ticket's `Changes` / `Definition of Done` / `Acceptance criteria` section is the authoritative plan skeleton. The plan's `## Acceptance criteria` entries map 1:1 to that list, in the same order. Do not invent entries.
+If the triggering message cites a ticket ID (Linear, GitHub, Jira, etc.) and you fetched it via step 2 of `/autopilot`, the ticket's `Changes` / `Definition of Done` / `Acceptance criteria` section is the authoritative plan skeleton. When you delegate to `@plan` (Phase 2 step 3), pack the ticket's acceptance criteria verbatim into the brief and instruct `@plan` to use them as `## Acceptance criteria` entries 1:1, in the same order. Do not invent entries, and do not let `@plan` invent them either.
 
-`@gap-analyzer` findings outside the ticket's scope become PR-description footnotes when you eventually ship; they do NOT widen the plan. If gap-analyzer says "you should also refactor X," either (a) file a follow-up ticket and mention it in `## Out of scope`, or (b) if it's genuinely blocking the work, justify the expansion in one sentence inside `## Goal`. Never silently widen.
+Gap-analyzer findings (run inside `@plan`) that fall outside the ticket's scope become PR-description footnotes when you eventually ship; they do NOT widen the plan. If `@plan` surfaces "you should also refactor X" as a plan entry, either (a) move it to `## Out of scope` as a follow-up ticket, or (b) if it's genuinely blocking the work, leave it and justify the expansion in one sentence inside `## Goal`. Never silently widen.
 
 For free-form (non-ticket) autopilot invocations, Rule 2 degrades gracefully: the user's literal request IS the scope; no invented additions.
 
@@ -31,10 +31,7 @@ Cite the precedent commit in the plan's `## Constraints` section ("follows patte
 
 ## Rule 4 — Plan-revision budget
 
-After `@plan-reviewer` returns `[REJECT]`:
-- 1st REJECT: fix the specific issues listed, resubmit once.
-- 2nd REJECT: do NOT revise further. Narrow scope instead — move disputed items to `## Out of scope` or defer them to a follow-up ticket.
-- 3rd REJECT: escalate to `@architecture-advisor` before attempting any more revision. You've exhausted the plan-reviewer channel.
+`@plan` runs its own `@plan-reviewer` loop internally and returns only when a plan has passed review. If `@plan` returns with open questions or an unresolvable fork (which should be rare — `@plan` is supposed to resolve ambiguity autonomously in autopilot mode too), treat it as an architectural fork: consult `@architecture-advisor`, pick a default per Rule 3 precedent, and re-delegate to `@plan` with the decision in the brief. Do not call `@plan-reviewer` directly from the orchestrator; it's `@plan`'s loop.
 
 ## Rule 5 — Completion-promise emission
 
