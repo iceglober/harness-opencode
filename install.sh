@@ -364,6 +364,33 @@ for d in "${SRC_CLAUDE}/skills/"*/; do
   MANIFEST_ENTRIES+=("$dst")
 done
 
+# docs/ holds long-form references extracted out of agent prompts (e.g.
+# autopilot-mode.md, hashline.md) so they don't flood every session's
+# system prompt. Per-file symlink discipline as elsewhere.
+if [[ -d "${SRC_CLAUDE}/docs" ]]; then
+  step "Linking Claude docs → ${CLAUDE_DIR}/docs/"
+  for f in "${SRC_CLAUDE}/docs/"*.md; do
+    [[ -e "$f" ]] || continue
+    name="$(basename "$f")"
+    dst="${CLAUDE_DIR}/docs/${name}"
+    link_file "$f" "$dst"
+    MANIFEST_ENTRIES+=("$dst")
+  done
+fi
+
+# bin/ holds shared-by-both-runtimes helper scripts (e.g. plan-check.sh).
+# Executables that agents invoke via bash. Per-file symlinks.
+if [[ -d "${SRC_CLAUDE}/bin" ]]; then
+  step "Linking Claude bin scripts → ${CLAUDE_DIR}/bin/"
+  for f in "${SRC_CLAUDE}/bin/"*; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    dst="${CLAUDE_DIR}/bin/${name}"
+    link_file "$f" "$dst"
+    MANIFEST_ENTRIES+=("$dst")
+  done
+fi
+
 step "Linking OpenCode tools → ${OC_DIR}/tools/"
 for f in "${SRC_OC}/tools/"*.ts; do
   [[ -e "$f" ]] || continue
