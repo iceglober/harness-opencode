@@ -12,12 +12,12 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 function readPrompt(name: string): string {
-  // In dist: prompts are in dist/agents/prompts/ (tsup copies them as text)
-  // In src: prompts are in src/agents/prompts/
-  // We try both locations.
+  // In the bundled dist/index.js, import.meta.url resolves to dist/,
+  // but prompts are at dist/agents/prompts/. In dev, HERE is src/agents/.
   const candidates = [
-    join(HERE, "prompts", name),
-    join(HERE, "..", "..", "src", "agents", "prompts", name),
+    join(HERE, "prompts", name),                               // dev: src/agents/prompts/
+    join(HERE, "agents", "prompts", name),                     // dist: dist/ → dist/agents/prompts/
+    join(HERE, "..", "..", "src", "agents", "prompts", name),  // fallback dev
   ];
   for (const p of candidates) {
     try {

@@ -5,9 +5,12 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 function readPrompt(name: string): string {
+  // In the bundled dist/index.js, import.meta.url resolves to dist/,
+  // but prompts are at dist/commands/prompts/. In dev, HERE is src/commands/.
   const candidates = [
-    join(HERE, "prompts", name),
-    join(HERE, "..", "..", "src", "commands", "prompts", name),
+    join(HERE, "prompts", name),                                  // dev: src/commands/prompts/
+    join(HERE, "commands", "prompts", name),                      // dist: dist/ → dist/commands/prompts/
+    join(HERE, "..", "..", "src", "commands", "prompts", name),   // fallback dev
   ];
   for (const p of candidates) {
     try {

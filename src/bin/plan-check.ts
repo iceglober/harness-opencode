@@ -17,7 +17,28 @@ import { dirname, join } from "node:path";
 
 export function planCheck(args: string[]): void {
   const here = dirname(fileURLToPath(import.meta.url));
-  const scriptPath = join(here, "plan-check.sh");
+  // In the bundled dist/cli.js, import.meta.url resolves to dist/.
+  // The shell script is at dist/bin/plan-check.sh. In dev, HERE is src/bin/.
+  const candidates = [
+    join(here, "plan-check.sh"),             // dev: src/bin/plan-check.sh
+    join(here, "bin", "plan-check.sh"),       // dist: dist/ → dist/bin/plan-check.sh
+  ];
+
+  let scriptPath: string | undefined;
+  for (const p of candidates) {
+    try {
+      execFileSync("test", ["-f", p]);
+      scriptPath = p;
+      break;
+    } catch {
+      // try next
+    }
+  }
+
+  if (!scriptPath) {
+    console.error("plan-check: could not find plan-check.sh");
+    process.exit(2);
+  }
 
   try {
     execFileSync("bash", [scriptPath, ...args], {
@@ -25,7 +46,6 @@ export function planCheck(args: string[]): void {
       encoding: "utf8",
     });
   } catch (e: any) {
-    // execFileSync throws on non-zero exit; propagate the exit code
     process.exit(e.status ?? 1);
   }
 }
