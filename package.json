@@ -1,0 +1,46 @@
+{
+  "name": "@glorious/harness-opencode",
+  "version": "0.1.0",
+  "description": "Opinionated OpenCode agent harness — orchestrator, plan, build, QA, skills, MCP wiring, hashline editing.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "glorious-harness-opencode": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "echo 'no linter configured yet'",
+    "prepublishOnly": "bun run build && bun run typecheck"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.14",
+    "@opencode-ai/sdk": "^1.14"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.19",
+    "@opencode-ai/sdk": "^1.14.19",
+    "@types/bun": "latest",
+    "@types/node": "^22",
+    "tsup": "^8",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "agent",
+    "harness",
+    "glorious"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iceglober/glorious-opencode.git"
+  }
+}

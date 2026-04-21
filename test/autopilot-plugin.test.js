@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// autopilot-plugin.test.js — unit tests for home/.config/opencode/plugins/autopilot.ts.
+// autopilot-plugin.test.js — unit tests for src/plugins/autopilot.ts.
 //
 // The plugin is opt-in (see AGENTS.md §"Autopilot activation"). These tests
 // lock in the activation gate, debounce behavior, and nudge-prompt contracts
@@ -25,9 +25,7 @@ const path = require("node:path");
 const PLUGIN_PATH = path.resolve(
   __dirname,
   "..",
-  "home",
-  ".config",
-  "opencode",
+  "src",
   "plugins",
   "autopilot.ts",
 );

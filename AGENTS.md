@@ -1,117 +1,81 @@
 # glorious-opencode — repo context for agents working on this repo
 
-You are editing the **glorious-opencode** harness itself — the repo that gets installed into other engineers' home directories to configure their OpenCode + Claude Code setup. This is meta-work: changes here propagate to every user on their next `install.sh` or `git pull`.
+You are editing the **@glorious/harness-opencode** npm plugin — an OpenCode agent harness delivered as a single npm package. This is meta-work: changes here propagate to every user on their next `bun update`.
 
 ## What this repo is
 
-A curl-installable agent harness. Not an npm package. Not a binary. Just git + bash + symlinks.
+An npm-published OpenCode plugin. Not a bash installer. Not a git-clone-into-$HOME harness.
 
 ```
 glorious-opencode/
-├── install.sh / uninstall.sh / update.sh   # the installer lifecycle
-├── home/                                    # files that get symlinked into user $HOME
-│   ├── .claude/{agents,commands,skills}/
-│   └── .config/opencode/
-│       ├── tools/                           # local .ts tool files (ast_grep, tsc_check, etc.)
-│       ├── plugins/                         # local .ts plugin files (notify, autopilot)
-│       ├── AGENTS.md
-│       ├── opencode.json                    # has "plugin": ["opencode-hashline"] for npm-delivered plugins
-│       └── package.json                     # dependencies for the npm-delivered plugins above
-├── docs/
-│   ├── installation.md                      # fetched by agents when user says "install this"
-│   └── claude-code-fallbacks.md
-├── README.md
-└── AGENTS.md                                # this file
+├── src/
+│   ├── index.ts              # Plugin entry — config hook, tools, events
+│   ├── agents/               # Agent definitions + prompts
+│   │   ├── index.ts          # createAgents() — returns Record<string, AgentConfig>
+│   │   ├── prompts/*.md      # Agent prompt files (read at runtime via readFileSync)
+│   │   └── shared/           # Shared content (workflow-mechanics rule)
+│   ├── commands/             # Slash command definitions + prompts
+│   ├── skills/               # Bundled skill directories (copied to dist/skills/)
+│   ├── tools/                # Custom tool implementations
+│   ├── plugins/              # Sub-plugins (autopilot, notify)
+│   ├── mcp/                  # MCP server configuration
+│   ├── bin/                  # Shell scripts (memory-mcp-launcher.sh, plan-check.sh)
+│   └── cli/                  # CLI subcommands (install, uninstall, doctor, merge-config)
+├── test/                     # bun:test test files
+├── dist/                     # Build output (gitignored)
+├── package.json              # npm package metadata
+├── tsconfig.json             # TypeScript config
+└── tsup.config.ts            # Build config (tsup)
 ```
-
-### Two kinds of plugins — important distinction
-
-OpenCode loads plugins two different ways, and this repo uses **both**:
-
-| | Local file plugins | npm-delivered plugins |
-|---|---|---|
-| Where they live | `home/.config/opencode/plugins/*.ts` | Listed in `opencode.json` `"plugin": [...]` array, installed via npm into `~/.config/opencode/node_modules/` |
-| Examples (ours) | `notify.ts`, `autopilot.ts` | `opencode-hashline` |
-| Installed by | The installer's symlink step | The installer's `npm install` / `bun install` step (after linking `package.json`) |
-| To add a new one | Drop a `.ts` file in `home/.config/opencode/plugins/` | Add the package to `home/.config/opencode/package.json` dependencies AND add the name to the `plugin` array in `home/.config/opencode/opencode.json` |
-
-## Install layout on user machines
-
-- `~/.glorious/opencode/` — this repo checked out (shared parent with other `glorious-*` tools)
-- `~/.claude/*` and `~/.config/opencode/*` — per-file symlinks back into `~/.glorious/opencode/home/`
 
 ## Rules when editing this repo
 
-1. **Everything under `home/` must be generic.** No `@kn/` imports, no repo-specific paths, no company-private idioms. Illustrative examples in prompts should use generic names (`createUser`, `src/lib/auth`, etc.). If you find a kn-eng / company-specific reference, either genericize it or move it out.
+1. **Zero user-filesystem-writes invariant.** The plugin MUST NOT write to `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode/skills/`, `~/.config/opencode/tools/`, or `~/.claude/`. The only permitted filesystem mutation is the CLI's `install` subcommand writing to `~/.config/opencode/opencode.json` (plugin-array entry, non-destructive merge). Skills live in `node_modules` (read-only by design).
 
-2. **Never break backward compatibility of the `.manifest` format.** The uninstaller reads this line-by-line. It's intentionally dumb. Keep it as one path per line.
+2. **Type-surface escape hatches are permitted where the SDK is narrower than the runtime.** Known gaps: `permission.external_directory` path-keyed maps; per-tool-name permission keys in `AgentConfig` (`ast_grep`, `tsc_check`, etc.); `skills.paths` (v2 SDK type, may not be in v1). Use `as unknown as Config` / narrow module augmentation. Document each escape hatch in `docs/plugin-architecture.md`.
 
-3. **Per-file symlinks only.** Never symlink whole directories (except `skills/<name>/` which are logical units). Users must be able to drop their own `~/.claude/agents/custom.md` without the installer fighting them.
+3. **No postinstall side-effects.** `bun add @glorious/harness-opencode` MUST NOT touch `~/.config/opencode/`. All filesystem mutation happens only via `bunx @glorious/harness-opencode install`.
 
-4. **`opencode.json` is merged non-destructively on install.** The installer adds missing keys from our shipped version, preserves all user values verbatim, and writes an `opencode.json.bak.<epoch>-<pid>` sibling before every mutation. It never overwrites a key the user has set, and never deletes keys. Arrays are treated as leaves (user's array wins) except for the top-level `plugin` array, which is unioned-by-value so `opencode-hashline` lands even when a user has a custom plugin list. Scalar-vs-object collisions (user set a string where we ship an object) preserve the user's scalar and emit a `WARN:` line — we do not auto-migrate. If you're tempted to widen the merge policy (deep-merge arbitrary arrays, auto-remove deprecated keys, auto-migrate scalar-vs-object collisions), STOP and ask. The current policy is intentionally narrow. The merge logic lives at `test/inline-merge.js` and is codified by the fixture suite at `test/fixtures/opencode-json/`; `bash test/merge-opencode-json.sh` runs the tests. The `install.sh` helper `merge_opencode_json` is just a dispatcher — node owns the transaction (backup + tempfile + atomic rename).
+4. **Merge policy for opencode.json (CLI install subcommand).** The installer adds missing keys from our shipped defaults, preserves all user values verbatim, and writes a `.bak.<epoch>-<pid>` sibling before every mutation. It never overwrites a key the user has set, and never deletes keys. Arrays are treated as leaves (user's array wins) except the top-level `plugin` array, which is unioned-by-value so our plugin name lands even when a user has a custom plugin list. Scalar-vs-object collisions preserve the user's scalar and emit a WARN. The merge logic lives at `src/cli/merge-config.ts` and is codified by the fixture suite at `test/fixtures/merge-config/`; `bun test test/merge-config.test.ts` runs the tests.
 
-5. **`~/.glorious/` is shared with other tools in the ecosystem.** Never `rm -rf` it. Uninstall only removes `~/.glorious/opencode/`, and only after checking if other siblings exist.
+5. **Skills precedence is plugin-wins.** OpenCode's skill scanner processes hardcoded paths (`~/.config/opencode/skills/`, `.opencode/skills/`, etc.) FIRST, then `config.skills.paths` entries LAST, and the LAST-SEEN location wins on name collision. Plugin-pushed `skills.paths` entries therefore shadow user-dropped hardcoded-path overrides. This is intentional: skills are read-only by design. Users who need to customize a skill fork the package.
 
-6. **Scripts must be POSIX-bash portable.** No zsh-only syntax, no GNU-only flag variants (e.g., `sed -i` behaves differently on BSD/macOS — prefer temp files and `mv`). Test on macOS + Linux when in doubt.
+6. **Agents/commands/MCPs use user-wins precedence.** `input.agent = { ...ourAgents, ...(input.agent ?? {}) }` — user's opencode.json overrides take effect. Same for commands and MCPs.
 
-7. **Dry-run must be honored everywhere.** Every state-changing command in `install.sh` goes through the `run` helper, which prints instead of executing when `--dry-run` is set.
+7. **Prompt files are read at runtime via `readFileSync`.** Do NOT use static `import` for `.md` files — bun's markdown handling converts them to HTML. Use the `readPrompt()` helper pattern in `src/agents/index.ts`.
+
+8. **No dangling path references in prompts.** Every file under `src/agents/prompts/`, `src/commands/prompts/`, and `src/skills/**/*.md` must not contain `~/.claude`, `home/.claude`, `~/.config/opencode`, or `home/.config/opencode`. CI enforces this via `test/prompts-no-dangling-paths.test.ts`.
+
+9. **Rollback recipe for maintainers.** For a broken release: `npm deprecate @glorious/harness-opencode@<broken> "<reason>; use <fix>"` + publish a patch. Users on floating semver auto-recover on next `bun update`.
+
+## When adding a new agent
+
+1. Add the prompt markdown to `src/agents/prompts/<name>.md` with YAML frontmatter (`name`, `description`, `mode`, `model`).
+2. Add a `readPrompt("<name>.md")` call and an entry in `createAgents()` in `src/agents/index.ts`.
+3. Add a test case in `test/agents.test.ts`.
+4. Run `bun run build && bun run typecheck && bun test`.
+
+## When adding a new skill
+
+1. Create `src/skills/<name>/SKILL.md` with required frontmatter (`name` matching dirname, `description`).
+2. The build's `onSuccess` step copies `src/skills/` to `dist/skills/` automatically.
+3. Add a file-count assertion in `test/skills-bundle.test.ts`.
+4. Run `bun run build && bun test test/skills-bundle.test.ts`.
+
+## When adding a new slash command
+
+1. Add the prompt markdown to `src/commands/prompts/<name>.md`.
+2. Add a `readPrompt("<name>.md")` call and an entry in `createCommands()` in `src/commands/index.ts`.
+3. Run `bun run build && bun run typecheck`.
 
 ## Testing changes
 
 ```bash
-# Dry-run against a scratch prefix
-bash install.sh --dry-run --prefix /tmp/goc-test
-
-# Real install into a scratch prefix
-bash install.sh --prefix /tmp/goc-test
-ls -la /tmp/goc-test/.claude/agents/
-ls -la /tmp/goc-test/.config/opencode/
-cat /tmp/goc-test/.glorious/opencode/.manifest
-
-# Idempotency (re-run should produce no "+ " lines, all "= already linked")
-bash install.sh --prefix /tmp/goc-test
-
-# Uninstall
-echo y | bash uninstall.sh /tmp/goc-test
-
-# Clean up
-rm -rf /tmp/goc-test
+bun run build          # Build dist/
+bun run typecheck      # TypeScript type check
+bun test               # Run all tests
+npm publish --dry-run  # Verify tarball contents
 ```
-
-## Things that commonly go wrong
-
-- **Paths in `opencode.json`.** The `{file:...}` references resolve relative to the config file's directory (`~/.config/opencode/`). To point at `~/.claude/agents/orchestrator.md`, use `../../.claude/agents/orchestrator.md`. Don't use `./` — that's wrong.
-
-- **macOS `readlink` differences.** `readlink -f` doesn't exist on BSD. Use plain `readlink "$path"` and never assume `-f`.
-
-- **`chmod +x` in Git.** If scripts lose the executable bit, users will hit "permission denied". Check with `git ls-files --stage install.sh` — it should show `100755`. The README documents `bash install.sh` as a workaround.
-
-- **Agent prompt paths in user-visible config.** When a user adds project-local overrides to their `opencode.json`, they may reference the globally-installed agents. Keep the paths stable — if you rename `orchestrator.md`, it's a breaking change.
-
-## When adding a new agent / command / skill
-
-1. Put the file in `home/.claude/agents/<name>.md` (or `commands/` or `skills/<name>/SKILL.md`)
-2. If it has an OpenCode `agent` block with permissions, add it to `home/.config/opencode/opencode.json`
-3. Update `README.md` "What you get" section
-4. Dry-run the installer to verify the file appears in the symlink plan
-5. No other changes needed — the installer globs `*.md` (agents/commands) and `*/` (skills), so new entries are picked up automatically
-
-## When adding a new plugin
-
-**Local file plugin** (a `.ts` file you wrote):
-1. Drop it in `home/.config/opencode/plugins/<name>.ts`
-2. Done — the installer globs `*.ts` and symlinks it
-
-**npm-delivered plugin** (published to the npm registry):
-1. Add to `home/.config/opencode/package.json` dependencies: `"opencode-foo": "^1.0.0"`
-2. Add to `home/.config/opencode/opencode.json` `"plugin"` array: `"opencode-foo"`
-3. The installer's npm-install step picks it up on next run. Existing users get it on their next `update.sh`.
-
-## When removing an agent / command / skill
-
-1. Delete the file under `home/`
-2. If it had an OpenCode `agent` block, remove it from `opencode.json`
-3. Existing users on older installs will still have the symlink on next `update.sh`; the installer doesn't currently prune removed files. (If this becomes a problem, we'll add a prune step that reads the old manifest.)
 
 ## Philosophy
 

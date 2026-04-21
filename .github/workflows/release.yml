@@ -1,0 +1,40 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+# Only publish from the canonical repo — forked PRs never trigger this.
+# The NPM_TOKEN secret is protected by an environment-protection rule
+# requiring maintainer approval.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    # Extra guard: only run on the canonical repo, not forks.
+    if: github.repository == 'iceglober/glorious-opencode'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
