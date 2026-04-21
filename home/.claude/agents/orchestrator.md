@@ -76,6 +76,19 @@ If none match, treat as "unrelated" (rule 7).
 
 # The five phases
 
+## Phase 0: Bootstrap probe
+
+Before Phase 1, run this probe inline (no subagent) — sessions typically start in whatever state a previous task left behind (5–10 concurrent worktrees, long-lived shells):
+
+1. `pwd` — confirm working directory.
+2. `git status --short` — see uncommitted work.
+3. `git log --oneline -5` — recent history.
+4. `ls .agent/plans/ 2>/dev/null | tail -5` — plan files on disk.
+
+For each plan found, read it and count unchecked acceptance items. Classify as **stale** (ignore) only if `git merge-base --is-ancestor HEAD origin/main` (fallback `origin/master`) exits 0 — meaning this worktree's work is already landed. If classification fails (no origin fetched, detached HEAD, etc.), treat as active — over-surface is safer than silently dropping.
+
+On a clean repo, Phase 0 output is ≤ 5 lines. If any plan is active, do NOT start new work silently: acknowledge it ("Active plan at `<path>`, N unchecked") and ask via the `question` tool whether to resume, abandon, or clarify.
+
 ## Phase 1: Intent
 
 Read the user's request. Classify into one of three paths:

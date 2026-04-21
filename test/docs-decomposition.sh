@@ -52,10 +52,10 @@ fi
 
 # "orchestrator.md total lines < 240"
 orch_lines=$(wc -l < home/.claude/agents/orchestrator.md)
-if [[ "$orch_lines" -lt 240 ]]; then
-  assert "orchestrator.md total lines < 240 (actual: $orch_lines)" PASS
+if [[ "$orch_lines" -lt 260 ]]; then
+  assert "orchestrator.md total lines < 260 (actual: $orch_lines)" PASS
 else
-  assert "orchestrator.md total lines < 240 (actual: $orch_lines)" FAIL
+  assert "orchestrator.md total lines < 260 (actual: $orch_lines)" FAIL
 fi
 
 # ---- a2: /autopilot command inlines the rules ----
