@@ -570,6 +570,11 @@ if [[ -f "$_doctor_oc_resolved" ]]; then
       warn "  → Replace the 'memory' block under \"mcp\" with:"
       warn '      "memory": {'
       warn '        "type": "local",'
+      # shellcheck disable=SC2016  # single quotes are intentional — the literal
+      # string "$HOME" is part of the JSON snippet the user must paste verbatim
+      # into opencode.json, where the outer `bash -c` at runtime does the
+      # expansion. Expanding $HOME here would print the installer operator's
+      # home, which is wrong for the JSON paste.
       warn '        "command": ["bash", "-c", "exec bash \"$HOME/.config/opencode/bin/memory-mcp-launcher.sh\""],'
       warn '        "enabled": true'
       warn "      }"
