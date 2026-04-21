@@ -58,6 +58,8 @@
           "git checkout *": "ask",
           "git worktree *": "ask",
           "rm -rf *": "deny",
+          "chmod +x *": "allow",
+          "chmod -x *": "allow",
           "chmod *": "deny",
           "chown *": "deny",
           "sudo *": "deny"
@@ -119,6 +121,8 @@
           "git checkout *": "ask",
           "git worktree *": "ask",
           "rm -rf *": "deny",
+          "chmod +x *": "allow",
+          "chmod -x *": "allow",
           "chmod *": "deny",
           "chown *": "deny",
           "sudo *": "deny"
@@ -151,6 +155,8 @@
       "git worktree *": "ask",
       "rm -rf *": "deny",
       "rm -r *": "ask",
+      "chmod +x *": "allow",
+      "chmod -x *": "allow",
       "chmod *": "deny",
       "chown *": "deny",
       "sudo *": "deny"

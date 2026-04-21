@@ -245,9 +245,11 @@ For each item in the plan's `## File-level changes`:
 4. Mark the corresponding `## Acceptance criteria` checkbox `[x]` in the plan file as items complete.
 
 When you discover the plan is wrong:
-- STOP execution.
-- Report the discrepancy with specifics.
-- Ask: "Should I update the plan and continue, or do you want to revise it manually?"
+- **Cosmetic / self-imposed numeric thresholds** (line-count budgets, row caps, string-length targets, arbitrary "< N" limits you set yourself in the plan) — just update the threshold in the plan file, note it in the commit message, and keep going. Do NOT stop. Do NOT ask. The user doesn't care whether a file is 238 or 258 lines; they care whether the work is done.
+- **Approach / design change** (e.g., "the interface I planned doesn't exist, I need to refactor the dependency", "this test strategy won't work and the whole §4 structure needs rethinking") — STOP, report the discrepancy with specifics, and ask: "Should I update the plan and continue, or do you want to revise it manually?"
+- **Scope expansion** (work that isn't in `## File-level changes` but is needed to finish the item) — add a bullet to `## File-level changes`, note in the commit. Ask only if the expansion is > ~2 files or changes the plan's `## Goal`.
+
+Rule of thumb: the user delegated the plan to you. Treat your own metrics as revisable; treat the user's goals as fixed.
 
 For trivial work (Phase 1 decided no plan): just make the change, run lint/tests on the touched file, and proceed to Phase 4.
 
@@ -283,7 +285,7 @@ STOP at Phase 5 — don't push or open a PR without the user's explicit `/ship` 
 - One request, one orchestrator session. If the user asks for unrelated work mid-session, complete the current arc first or explicitly drop it ("OK, abandoning the OAuth work to focus on this") before starting new.
 - Git and `gh` are normal tools. Commit freely during execution. When the user invokes `/ship`, push branches, open PRs, reply to review comments, update PR titles/bodies, and edit the linked Linear issue without re-asking for permission on each step — that's what `/ship` is for. The human gate is the user running `/ship`; once they have, execute the full lifecycle (push → PR → address feedback loops) without friction. The only hard lines: (a) never `git push --force` or `git push -f` (permission-denied anyway), (b) never push to `main` or `master` directly (permission-denied anyway), (c) never merge a PR without the user explicitly saying "merge it". If `/ship` hasn't been invoked, don't push unsolicited — commits stay local, the user can reset/rebase as needed.
 - **Never bypass git hooks with `--no-verify` or `--no-gpg-sign`.** If a pre-commit hook fails (husky / TODO check / lint), the correct response is to fix the underlying cause, not bypass the check. If you believe the hook is wrong, STOP and ask the user — don't take the shortcut.
-- Never silently modify the plan after `[OKAY]`. If the plan needs changes mid-execution, report and ask.
+- Plan mutations after `[OKAY]`: cosmetic/numeric thresholds (line budgets, row caps, arbitrary targets you set yourself) — update silently, note in commit. Design/approach changes — report and ask. See Phase 3 § "When you discover the plan is wrong" for the full rubric.
 - For trivial work without a plan: still respect Phase 4 (tests + lint must pass) and Phase 5 (don't ship without explicit user command).
 - If the user types anything during execution, treat it as either: (a) a course correction to apply, or (b) a halt request. Default to halt-and-ask if ambiguous.
 - Use `@code-searcher` for any search that might return > 30 hits. Don't pollute your own context with grep dumps.
