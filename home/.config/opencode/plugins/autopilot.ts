@@ -5,6 +5,10 @@ import * as path from "node:path";
 interface SessionAutopilot {
   iterations: number;
   lastPlanPath?: string;
+  /** Epoch ms of the most recently observed .agent/fresh-handoff.md. Used to
+   * detect a /fresh re-key between autopilot iterations and switch the nudge
+   * from "continue this plan" to "new task — read the handoff brief". */
+  lastHandoffMtime?: number;
 }
 
 interface AutopilotState {
@@ -12,9 +16,19 @@ interface AutopilotState {
 }
 
 const STATE_PATH = ".agent/autopilot-state.json";
+const HANDOFF_PATH = ".agent/fresh-handoff.md";
 const MAX_ITERATIONS = 10;
 const TARGET_AGENTS = new Set(["build", "orchestrator"]);
 const MESSAGE_LIMIT = 60;
+
+async function getHandoffMtime(dir: string): Promise<number | null> {
+  try {
+    const stat = await fs.stat(path.join(dir, HANDOFF_PATH));
+    return stat.mtimeMs;
+  } catch {
+    return null;
+  }
+}
 
 async function readState(dir: string): Promise<AutopilotState> {
   try {
@@ -96,7 +110,22 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (!agent || !TARGET_AGENTS.has(agent)) return;
 
       const state = await readState(directory);
-      const sessState: SessionAutopilot = state.sessions[sessionID] ?? { iterations: 0 };
+      const existingSessState = state.sessions[sessionID];
+      const sessState: SessionAutopilot = existingSessState ?? { iterations: 0 };
+
+      // First-time session encounter: seed lastHandoffMtime with the current
+      // brief's mtime (if any) so we don't misinterpret a pre-existing handoff
+      // from a prior session as a new /fresh transition. Nothing to nudge on
+      // yet — just record state and wait for the next idle event.
+      if (!existingSessState) {
+        const initialMtime = await getHandoffMtime(directory);
+        state.sessions[sessionID] = {
+          iterations: 0,
+          lastHandoffMtime: initialMtime ?? undefined,
+        };
+        await writeState(directory, state);
+        sessState.lastHandoffMtime = initialMtime ?? undefined;
+      }
 
       if (sessState.iterations >= MAX_ITERATIONS) {
         await client.session.promptAsync({
@@ -112,7 +141,50 @@ const plugin: Plugin = async ({ client, directory }) => {
             ],
           },
         });
-        state.sessions[sessionID] = { iterations: 0 };
+        // Preserve lastHandoffMtime so the next idle-scan doesn't misread the
+        // existing handoff brief as a new /fresh transition.
+        state.sessions[sessionID] = {
+          iterations: 0,
+          lastHandoffMtime: sessState.lastHandoffMtime,
+        };
+        await writeState(directory, state);
+        return;
+      }
+
+      // Check for a fresh /fresh handoff — if .agent/fresh-handoff.md's mtime is
+      // newer than what we last recorded for this session, /fresh was run
+      // between idle events and we should pivot the nudge accordingly.
+      const handoffMtime = await getHandoffMtime(directory);
+      const lastSeenHandoff = sessState.lastHandoffMtime ?? 0;
+      const isFreshTransition =
+        handoffMtime !== null &&
+        handoffMtime > lastSeenHandoff &&
+        // A fresh re-key just happened if iterations is 0 (reset by /fresh)
+        // AND the handoff mtime is newer than what we've seen before.
+        sessState.iterations === 0;
+
+      if (isFreshTransition) {
+        await client.session.promptAsync({
+          path: { id: sessionID },
+          body: {
+            parts: [
+              {
+                type: "text",
+                text:
+                  `[autopilot] /fresh re-keyed this worktree to a new task. ` +
+                  `Read \`${HANDOFF_PATH}\` for the full context (tracker ref, ` +
+                  `branch name, base branch, reset-hook output), then run the ` +
+                  `orchestrator five-phase workflow on the described work. ` +
+                  `Do NOT revisit prior plans in this session — they belong to ` +
+                  `the previous task.`,
+              },
+            ],
+          },
+        });
+        state.sessions[sessionID] = {
+          iterations: 1,
+          lastHandoffMtime: handoffMtime,
+        };
         await writeState(directory, state);
         return;
       }
@@ -131,7 +203,10 @@ const plugin: Plugin = async ({ client, directory }) => {
       const failed = lastAssistantFailed(messages);
 
       if (unchecked === 0 && !failed) {
-        state.sessions[sessionID] = { iterations: 0 };
+        state.sessions[sessionID] = {
+          iterations: 0,
+          lastHandoffMtime: handoffMtime ?? undefined,
+        };
         await writeState(directory, state);
         return;
       }
@@ -158,6 +233,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       state.sessions[sessionID] = {
         iterations: sessState.iterations + 1,
         lastPlanPath: planPath,
+        lastHandoffMtime: handoffMtime ?? sessState.lastHandoffMtime,
       };
       await writeState(directory, state);
     },
@@ -166,7 +242,12 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (!agent || !TARGET_AGENTS.has(agent)) return;
       const state = await readState(directory);
       if (state.sessions[sessionID]) {
-        state.sessions[sessionID] = { iterations: 0 };
+        // Preserve lastHandoffMtime across user-message resets; losing it would
+        // cause the next idle-scan to misread a pre-/fresh handoff as a new one.
+        state.sessions[sessionID] = {
+          iterations: 0,
+          lastHandoffMtime: state.sessions[sessionID].lastHandoffMtime,
+        };
         await writeState(directory, state);
       }
     },
