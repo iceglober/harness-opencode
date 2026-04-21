@@ -6,7 +6,18 @@ model: anthropic/claude-opus-4-7
 temperature: 0.1
 permission:
   edit: deny
-  bash: ask
+  bash:
+    "*": "allow"
+    "git push *": "deny"
+    "git push --force*": "deny"
+    "git push -f *": "deny"
+    "git clean *": "deny"
+    "git reset --hard*": "deny"
+    "git checkout *": "deny"
+    "rm -rf *": "deny"
+    "chmod *": "deny"
+    "chown *": "deny"
+    "sudo *": "deny"
   webfetch: deny
   ast_grep: allow
   tsc_check: allow
