@@ -176,6 +176,115 @@ test("detectActivation: substring 'autopilot' without slash => false (not a comm
     assert.equal(detectActivation(msgs, null, 0, 0), false);
 });
 
+// --- first-user-message-only activation (self-activation guard) ----------
+//
+// These tests lock in the tightened scope from the autopilot-no-self-activate
+// fix. The old behavior scanned every user message for the marker; the new
+// behavior scans only the FIRST user message. This prevents the orchestrator
+// from self-activating when a marker appears later in the transcript
+// (quoted context, paste-old-transcript, prompt-injection).
+
+test("detectActivation: marker ONLY in second user message (first has no marker) => false", async () => {
+    const { detectActivation } = await import(PLUGIN_PATH);
+    // Common symptom: user kicks off a normal session, then in a later
+    // turn references /autopilot as context ("like the /autopilot mode
+    // does"). The later marker must NOT retroactively activate.
+    const msgs = [
+      userMsg("please implement KESB-23"),
+      userMsg("/autopilot do X"),
+    ];
+    assert.equal(detectActivation(msgs, null, 0, 0), false);
+});
+
+test("detectActivation: marker only in later user message (paste-old-transcript case) => false", async () => {
+    const { detectActivation } = await import(PLUGIN_PATH);
+    // User pastes a snippet from an old session as context. The /autopilot
+    // token landing mid-transcript is NOT an activation signal.
+    const msgs = [
+      userMsg("hello"),
+      userMsg("status"),
+      userMsg("here's what I tried: /autopilot ENG-1"),
+      userMsg("any ideas?"),
+      userMsg("thanks"),
+    ];
+    assert.equal(detectActivation(msgs, null, 0, 0), false);
+});
+
+test("detectActivation: AUTOPILOT mode phrase only in second user message => false", async () => {
+    const { detectActivation } = await import(PLUGIN_PATH);
+    // User quotes or references documentation that mentions the marker.
+    // Descriptive mention is not activation.
+    const msgs = [
+      userMsg("hi"),
+      userMsg("the docs say 'AUTOPILOT mode' means lights-out orchestration"),
+    ];
+    assert.equal(detectActivation(msgs, null, 0, 0), false);
+});
+
+test("detectActivation: first message is assistant, first user message has marker => true", async () => {
+    const { detectActivation } = await import(PLUGIN_PATH);
+    // "First user message" means "first message with role=user", not
+    // "literal first message in the array". An initial assistant/system
+    // preamble does not shift the scan.
+    const msgs = [
+      assistantMsg("greeting"),
+      userMsg("/autopilot ENG-1"),
+    ];
+    assert.equal(detectActivation(msgs, null, 0, 0), true);
+});
+
+test("detectActivation: fresh-handoff still activates when first user message has no marker", async () => {
+    const { detectActivation } = await import(PLUGIN_PATH);
+    // Signal 2 (fresh-handoff) is independent of Signal 1's scope.
+    // /plan-loop writing the handoff brief remains a trusted activation
+    // path regardless of user-message content.
+    const msgs = [userMsg("unrelated chat, no marker")];
+    assert.equal(detectActivation(msgs, 1000, 500, 0), true);
+});
+
+test("session.idle: marker in SECOND user message → zero nudges (no retroactive activation)", async () => {
+    // End-to-end integration test. The plugin's real event handler must
+    // NOT activate a session where the /autopilot marker only appears
+    // in a later user message. Fires two consecutive session.idle events
+    // to verify the state stays un-enabled across events too.
+    const { default: factory } = await import(PLUGIN_PATH);
+    const dir = mkTmpDir();
+    try {
+      writeFixture(
+        dir,
+        ".agent/plans/x.md",
+        "# X\n## Acceptance criteria\n- [ ] a\n- [ ] b\n",
+      );
+      const messages = [
+        userMsg("please implement x; see .agent/plans/x.md"),
+        assistantMsg("working on it"),
+        userMsg("/autopilot do X"), // marker here, NOT in first user message
+      ];
+      const client = mockClientWithMessages(messages);
+      const handlers = await factory({ client, directory: dir });
+      await handlers.event({
+        event: { type: "session.idle", properties: { sessionID: "s1" } },
+      });
+      await handlers.event({
+        event: { type: "session.idle", properties: { sessionID: "s1" } },
+      });
+      assert.equal(
+        client.prompts.length,
+        0,
+        "marker in non-first user message must not retroactively activate",
+      );
+      const state = readStateFile(dir);
+      assert.ok(state, "state file exists after first-time-seed");
+      assert.equal(
+        state.sessions.s1.enabled,
+        undefined,
+        "session must not be marked enabled",
+      );
+    } finally {
+      rmTmpDir(dir);
+    }
+});
+
 test("sendNudgeDebounced: first call sends", async () => {
     const { sendNudgeDebounced } = await import(PLUGIN_PATH);
     const client = mockClient();

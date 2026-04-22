@@ -801,14 +801,38 @@ function evaluateStagnation(
  * Decide whether this session should have autopilot nudge-processing enabled.
  * Two activation signals, checked against the scanned messages + filesystem:
  *
- *   1. Any user message contains `AUTOPILOT mode` or starts with `/autopilot`.
- *      This catches both the slash-command invocation and the in-prompt marker
- *      that `home/.claude/commands/autopilot.md` emits into the orchestrator's
- *      incoming message body.
+ *   1. The **FIRST user message** in the session contains `AUTOPILOT mode` or
+ *      a `/autopilot` token. This is the slash-command-invocation signal:
+ *      the `/autopilot` command always lands as the initiating user message,
+ *      and its prompt injects the literal marker `AUTOPILOT mode` into the
+ *      orchestrator's incoming body. We scan ONLY the first user message
+ *      (not every user message) to close a self-activation loophole:
+ *
+ *       - A marker appearing in a LATER user message is either (a) the
+ *         user quoting context from an old transcript or pasting a
+ *         document that mentions `/autopilot`, (b) a subsequent turn in
+ *         an already-activated session — already handled by the `enabled`
+ *         monotonic flag, or (c) a prompt-injection attempt. None of
+ *         those three should retroactively activate a session that
+ *         wasn't started with `/autopilot`.
+ *       - Sticky-`enabled` preserves in-flight autopilot sessions
+ *         unchanged: once `detectActivation` has returned `true` on the
+ *         first idle event of a session, the caller sets `enabled: true`
+ *         and this function is never re-consulted for that session.
+ *       - Re-entry after a state-file wipe is effectively a new session
+ *         from the plugin's POV; the first user message becomes the only
+ *         activation carrier, matching the new-session interpretation.
+ *
+ *      "First user message" means the first entry in `messages` where
+ *      `msg.info?.role === "user"` — so an assistant message appearing
+ *      before the first user turn (e.g., an initial system-generated
+ *      preamble) does not shift the scan.
+ *
  *   2. A fresh-handoff transition just happened (handoff mtime advanced AND
  *      iterations is 0). `/plan-loop` is the only caller that writes the
  *      handoff brief, and it exists to hand off to autopilot — so any fresh
- *      transition implies autopilot.
+ *      transition implies autopilot. Signal 2 is independent of Signal 1
+ *      and is unaffected by the first-user-message tightening.
  *
  * Once either signal fires, return `true` and the caller should set
  * `enabled: true` on the session. Never returns `false` as "disable"; callers
@@ -821,13 +845,15 @@ function detectActivation(
   lastSeenHandoff: number,
   currentIterations: number,
 ): boolean {
-  // Signal 1: message-body markers from the slash command or orchestrator
-  // prompt. Check every user message (not just the most recent) so that a
-  // `/autopilot` invocation earlier in the session keeps the mode active
-  // even after subsequent non-marker user messages.
+  // Signal 1: check the FIRST user message only. See the function doc
+  // for the full rationale; briefly: later markers are either quoted
+  // context, continuation of an already-active session, or injection
+  // attempts — none should retroactively activate.
   for (const msg of messages) {
     if (msg.info?.role !== "user") continue;
+    // First user message found. This is the only one we consult.
     if (AUTOPILOT_MARKER_RE.test(userText(msg))) return true;
+    break;
   }
   // Signal 2: fresh-handoff transition. The `/plan-loop` skill writes the
   // handoff brief and only `/plan-loop` does that, so any advance is
