@@ -1,10 +1,10 @@
 ---
-description: Re-key the current worktree to a new task. Discards working-tree state, fetches latest default branch, creates a new branch, dispatches to the repo reset hook for process/container cleanup, and writes a handoff brief. Assumes long-running worktree model — one terminal tab, one persistent worktree, many tasks over its lifetime.
+description: Re-key the current worktree to a new task. Runs the repo's .glorious/hooks/fresh-reset if present+executable; otherwise discards local changes, fetches latest origin, and creates a new branch from it. Writes a handoff brief for agent continuity. Assumes long-running worktree model — one terminal tab, one persistent worktree, many tasks over its lifetime.
 ---
 
 User input: $ARGUMENTS
 
-You are re-keying an existing, long-running git worktree to a new unit of work. The worktree itself is not created or destroyed — it's a persistent shell tab owned by the user. Your job is to get the working tree clean, the branch pointing at the right place, and repo-specific resources (Postgres, docker, dev servers) reset to a fresh state — **scoped to this worktree only**. Other worktrees and their running processes must be untouched.
+You are re-keying an existing, long-running git worktree to a new unit of work. The worktree itself is not created or destroyed — it's a persistent shell tab owned by the user. Your job is to parse the request, complete any interactive safety confirmations, then dispatch to the repo's reset strategy (either a committed hook or the built-in default), and finally write a handoff brief so the next agent turn can pick up cleanly — all **scoped to this worktree only**. Other worktrees and their running processes must be untouched.
 
 ## Mental model (read this first)
 
@@ -19,14 +19,23 @@ What `/fresh` does NOT do:
 
 What `/fresh` DOES do, in order:
 
-1. Verify the current cwd is inside a git worktree (not the main checkout).
-2. Parse `$ARGUMENTS` to derive the new branch name (same rules as before — Linear/GitHub reference or free-text slug).
-3. Confirm destructive reset with the user if working tree is dirty.
-4. Discard all uncommitted changes (reset + clean).
-5. Fetch `origin/<default-branch>` and create the new branch from it.
-6. Invoke `.glorious/hooks/fresh-reset` for repo-specific process/container cleanup.
-7. Write `.agent/fresh-handoff.md` with the context so future agent turns (and future sessions opened in this same dir) can pick up cleanly.
-8. Print a compact summary. **Do NOT tell the user to `cd` — they're already there.**
+1. **Prereq checks** — verify cwd is inside a worktree (not the main checkout).
+2. **Parse `$ARGUMENTS`** — extract flags and free text.
+3. **Derive the new branch name** — from Linear/GitHub reference or free-text slug, with collision retry.
+4. **Working-tree safety check** — confirm-then-discard in interactive mode; hard-stop in `--yes` mode if the tree has tracked or non-gitignored untracked changes.
+5. **Capture state** — `OLD_BRANCH`, unpushed commits, handoff-brief-preservation snapshot.
+6. **Dispatch to the reset strategy** — hook present+executable → hook; otherwise (or `--skip-hook`) → built-in flow.
+7. **Write `.agent/fresh-handoff.md`** — so future agent turns (and future sessions opened in this same dir) can pick up cleanly.
+8. **Reset autopilot state** — zero iteration counters so the autopilot plugin sees a clean slate.
+9. **Print a compact summary** — **Do NOT tell the user to `cd` — they're already there.**
+
+## Architectural principle: who owns what
+
+- **`/fresh` owns the protocol:** argument parsing, safety gates (dirty-tree checks, `--yes` abort semantics, `--no-discard`), `OLD_BRANCH` capture, handoff-brief writing, autopilot-state reset, summary printing. These are invariants that the rest of the harness (especially the autopilot plugin's re-key detection) depends on and must be consistent across repos.
+
+- **The reset strategy owns the reset:** discarding working tree, switching branches, cleaning up repo-specific processes/containers, resetting env files. This is project-specific. The built-in flow is the default strategy (sensible for the long-running-worktree model); projects can ship their own at `.glorious/hooks/fresh-reset` if they want different semantics (e.g., "brand new worktree per task," "nuke containers only," "no-op on a bare repo").
+
+**The two paths are mutually exclusive.** Either the hook runs, or the built-in flow runs. Never both. Hooks that want "the built-in thing plus some extras" must either (a) explicitly replicate the built-in logic inline (see §5a for the exact commands to copy), or (b) leave the hook absent and rely on the user running their extras manually after `/fresh`.
 
 ## 0. Prereqs
 
@@ -41,7 +50,7 @@ Same parsing rules as a typical fresh-worktree command:
 
 - **Core flags** (consumed here):
   - `--from <branch>` — base branch override (default: repo's default branch, usually `main`)
-  - `--skip-hook` — skip the `.glorious/hooks/fresh-reset` invocation (useful if the user knows the env is already clean)
+  - `--skip-hook` — force the built-in flow even when `.glorious/hooks/fresh-reset` is present+executable. Escape hatch for when you want to bypass the hook (e.g., debugging a broken hook). When no hook is present, this flag is a silent no-op.
   - `--no-discard` — refuse to proceed if the working tree is dirty, instead of offering to discard (sanity safety for paranoid users)
   - `--yes` — **non-interactive mode**. Assume yes on any confirmation that would normally use the `question` tool. Autopilot and orchestrator pass this when invoking `/fresh` inside a loop. Changes behavior when the tree is dirty: see § Non-interactive mode below.
 - **Free text** — first contiguous non-flag substring, used to derive the branch name.
@@ -69,6 +78,8 @@ The invariant: `--yes` must never destroy work that a reasonable human would wan
 To detect the tracked-vs-untracked split from `git status --porcelain`:
 - Lines starting with ` M`, `M `, `MM`, `A `, `D `, ` D`, `R `, `C `, `U ` (or any non-`??` prefix) = tracked changes present
 - Lines starting with `??` = untracked; run `git check-ignore --stdin` across them to split gitignored-debris from intentional-new-files
+
+**Why safety gates are owned by `/fresh`, not the hook:** the `question` tool is available only to the orchestrator agent; a bash hook cannot prompt. To keep `--yes` abort semantics deterministic (which autopilot relies on) and interactive-mode confirmations coherent, all dirty-tree gating runs in `/fresh` BEFORE dispatching to either path. The dispatch target (hook or built-in) always runs against a tree that either is clean, is only gitignored debris cleared for `git clean -fdx`, or has been confirmed-for-discard by the user.
 
 ## 2. Derive the new branch name
 
@@ -102,6 +113,8 @@ If tracker lookup fails for any reason, fall through to the free-text path. Neve
 
 Capture old branch name via `git branch --show-current` BEFORE any state changes — it's part of the summary and handoff brief.
 
+The derived name is the **suggested** `NEW_BRANCH` passed to the hook (if one runs). A hook is free to override it — `/fresh` reads `git branch --show-current` post-dispatch to determine the actual post-reset branch and uses that in the brief.
+
 ## 3. Working-tree safety check (critical)
 
 Run these and assemble a "what would be lost" picture:
@@ -117,44 +130,63 @@ STALE_STASHES=$(git stash list | head -5)
 | Condition | Interactive default | `--yes` mode |
 |---|---|---|
 | Clean tree, tracked upstream | Proceed silently | Proceed silently |
-| Dirty tree: only gitignored/untracked debris | Confirm discard (see below) | **Proceed** — `git clean -fdx` is safe here |
+| Dirty tree: only gitignored/untracked debris | Confirm discard (see below) | **Proceed** — the dispatch target is expected to clean it, or the built-in will |
 | Dirty tree: tracked changes (modified/staged/deleted) | Confirm discard (see below) | **Abort** with tracked-file list |
 | Dirty tree: untracked non-gitignored files | Confirm discard (see below) | **Abort** with file list |
 | Dirty tree and `--no-discard` passed (any mode) | Abort with the dirty list | Abort with the dirty list |
 | Unpushed commits exist | **Proceed without asking** — old branch ref preserves them; summary mentions `Previous branch <old> kept N unpushed commits — recover with git checkout <old>` | Same |
 
-**Destructive-discard confirmation (when dirty tree):**
+**Destructive-discard confirmation (when dirty tree, interactive mode):**
 
 Use the `question` tool with these exact contents:
 
 - Question: `Worktree is dirty. /fresh will hard-discard ALL uncommitted changes in this worktree. Proceed?`
 - Header: `Discard uncommitted changes?`
 - Options:
-  - `Yes, discard everything` — proceeds to step 4
+  - `Yes, discard everything` — proceeds to step 4 (dispatch)
   - `No, abort /fresh` — exits the command cleanly, zero changes made
   - `Show what would be lost first` — print `git status --short` output plus `git diff --stat HEAD`, then re-ask (recursive, but OK — the question tool handles this)
 
-**If the user confirms discard:**
-
-```bash
-git reset --hard HEAD
-git clean -fdx
-```
-
-Note the `-x` on `clean`: removes files matched by `.gitignore` too. This is deliberate for the long-running-worktree model — `.env` files, `dist/`, `node_modules/.cache/`, leftover build artifacts, etc. all get purged. The reset hook (step 6) is responsible for re-creating anything the new task needs (e.g., re-patch `.env`).
-
-**BUT preserve `.agent/`** if it exists and contains a handoff brief you're about to overwrite. Before `git clean -fdx`:
+**BUT preserve `.agent/fresh-handoff.md`** if it exists, before any reset strategy runs. This must happen here (in the orchestrator agent, not the hook) because the brief-preservation is a `/fresh`-protocol concern: we want the old brief archived regardless of which reset strategy fires next:
 
 ```bash
 if [ -f .agent/fresh-handoff.md ]; then
   mkdir -p /tmp/fresh-handoff-archive
-  cp .agent/fresh-handoff.md "/tmp/fresh-handoff-archive/$(basename $WORKTREE_DIR)-$(date +%s).md"
+  cp .agent/fresh-handoff.md "/tmp/fresh-handoff-archive/$(basename $WORKTREE_DIR)-$(date +%s).md" || true
 fi
 ```
 
 Best-effort preservation of the previous brief in `/tmp` for recovery if the user ran `/fresh` by mistake. Don't fail if this step fails — it's a courtesy.
 
-## 4. Fetch and create the new branch
+## 4. Dispatch: hook-present vs hook-absent
+
+This is the branch point where the reset strategy is chosen. `/fresh` does NOT run any git state-changing commands itself in this section — it only decides which path runs.
+
+**Hook discovery:**
+
+```bash
+HOOK_PATH="$WORKTREE_DIR/.glorious/hooks/fresh-reset"
+```
+
+Three discovery outcomes:
+
+| Condition | Outcome |
+|---|---|
+| `-f "$HOOK_PATH"` false | **No hook.** Run the built-in flow (§5a). Silent — generic repos don't need a hook. |
+| `-f "$HOOK_PATH"` true AND `-x "$HOOK_PATH"` false | **Hook disabled.** Emit a WARN in the summary and brief (`hook (skipped — not executable, ran built-in instead — WARNING)`), then run the built-in flow. This preserves `chmod -x` as a deliberate kill-switch but makes the skip visible so users don't silently lose their hook. |
+| `-f "$HOOK_PATH"` true AND `-x "$HOOK_PATH"` true | **Hook present and enabled.** If `--skip-hook` was passed: log `hook (skipped via --skip-hook)` and run the built-in flow (§5a). Otherwise: dispatch to the hook (§5b). |
+
+### 5a. Built-in reset (hook absent, non-executable, or --skip-hook)
+
+The default reset strategy. This is the long-running-worktree flow: discard any remaining dirt (the § 3 confirmation has already authorized this in interactive mode), fetch the latest base branch, and check out a new branch from it.
+
+```bash
+# Discard any confirmed-for-discard dirty state. In the clean-tree case these are no-ops.
+git reset --hard HEAD
+git clean -fdx
+```
+
+Note the `-x` on `clean`: removes files matched by `.gitignore` too (`.env`, `dist/`, `node_modules/.cache/`, leftover build artifacts). This is deliberate for the long-running-worktree model — a fresh task should get a pristine working tree. Projects that need per-task `.env` regeneration or dep installation should ship a hook (§5b) that does both the reset and the post-reset setup.
 
 ```bash
 # Default branch name — from repo convention
@@ -173,65 +205,66 @@ git checkout -b "$NEW_BRANCH_NAME" "origin/$BASE_BRANCH"
 
 On `git fetch` failure (network, auth, etc.): print the error, then **fall back to the local tip of `$BASE_BRANCH`** with a warning. Do NOT abort — network blips are common and the user may be offline.
 
-On `git checkout -b` failure (collision after step 2's retry logic failed): this shouldn't happen given step 2's safeguards. If it does: abort with the error. Working tree is already clean from step 3, so the user is in a recoverable state.
+On `git checkout -b` failure (collision after §2's retry logic failed): this shouldn't happen given the earlier safeguards. If it does: abort with the error. Working tree is already clean, so the user is in a recoverable state.
 
-## 5. Invoke `.glorious/hooks/fresh-reset`
+`RESET_STATUS` for the brief is one of: `built-in (clean)` if the pre-dispatch tree was clean, `built-in (discarded N files)` if dirt was cleared.
 
-This is the repo-specific teardown+setup step. Skipped if `--skip-hook` was passed.
+### 5b. Hook reset (hook present + executable, no --skip-hook)
 
-Check for `.glorious/hooks/fresh-reset` in the current worktree. If it doesn't exist or isn't executable, skip silently (the repo hasn't opted in, which is fine for hobby repos).
+The project-specific reset strategy. The hook owns the entire reset: working-tree clean, branch switch, process/container cleanup, env regeneration, dep re-install — whatever the project needs.
 
-**Environment variables to pass:**
+**Environment variables passed in:**
 
-- `WORKTREE_DIR` — absolute path of the current worktree (captured in step 0)
+- `WORKTREE_DIR` — absolute path of the current worktree (captured in §0)
 - `WORKTREE_NAME` — basename of `WORKTREE_DIR` (useful for scoping things like `docker-compose -p <name>`)
-- `OLD_BRANCH` — the branch name before /fresh ran (captured in step 2)
-- `NEW_BRANCH` — the new branch name (derived in step 2)
-- `BASE_BRANCH` — the base branch the new branch was created from (from step 4)
+- `OLD_BRANCH` — the branch name before /fresh ran (captured in §2)
+- `NEW_BRANCH` — the **suggested** new branch name (derived in §2). The hook MAY override by checking out a different branch; `/fresh` reads `git branch --show-current` post-hook to discover the actual result.
+- `BASE_BRANCH` — the base branch the new branch is intended to derive from (from §1 `--from` flag or repo default). Informational; hook may pick a different base.
 - `FRESH_PASSTHROUGH_ARGS` — pass-through args joined with spaces (informational only, not parse-safe)
 
-**Positional args:**
+**Positional args:** the pass-through args from `$ARGUMENTS`, verbatim, so the hook can use `getopt` / `case` / etc.
 
-The hook is invoked with pass-through args verbatim so it can use `getopt`/`case`:
+**Invocation** — execute the hook directly so its shebang is respected (the hook author chose zsh, python, node, or anything else):
 
 ```bash
-bash "$WORKTREE_DIR/.glorious/hooks/fresh-reset" "${PASSTHROUGH_ARGS[@]}"
+"$HOOK_PATH" "${PASSTHROUGH_ARGS[@]}"
 ```
 
-**Hook contract** (what the repo's hook is responsible for):
-
-- Killing dev servers, watchers, or other processes spawned previously IN THIS WORKTREE (matching on `/proc/<pid>/cwd` == `$WORKTREE_DIR`, or by PID files in `$WORKTREE_DIR/.pids/`, or by a project-label convention).
-- Stopping docker/compose projects scoped to this worktree (e.g., `docker compose -p "$WORKTREE_NAME" down`).
-- Freeing any port slot allocated to this worktree (e.g., releasing a Postgres port reservation).
-- Re-running any env-patching for the new task (e.g., regenerating `.env` with the new branch name or secrets).
-- Re-installing deps if the lockfile changed between `OLD_BRANCH` and `NEW_BRANCH` (usually just `pnpm install` / `bun install` / etc. — idempotent in the common case).
-
-**What the hook must NOT do:**
-
-- Touch any other worktree's directory, processes, or containers. This is the iron rule. If the hook uses `docker ps` or `ps` broadly, it MUST filter by `WORKTREE_NAME` or `WORKTREE_DIR` before killing anything.
-- Modify global state (user's shell rc, `$HOME/.docker/config.json`, system services, etc.).
-- Prompt the user. The hook runs non-interactively.
+(Do NOT force `bash "$HOOK_PATH"` — that breaks non-bash hooks.)
 
 **Exit semantics:**
 
-- Exit 0 → success, continue.
-- Exit non-zero → print the hook's output as a warning, continue to step 7. The worktree itself is in a valid post-fresh state; the hook failure only means repo-specific setup didn't complete. User can re-run the hook manually.
+- Exit 0 → success, continue to §6. `RESET_STATUS` = `hook (exit 0)`.
+- Exit non-zero → **warn, do not abort.** Still proceed to §6 so the handoff brief is written. The brief includes `RESET_STATUS` = `hook (exit <code> — WARNING)` and a prominent failure banner (see §6 template). Rationale: the hook may have done 80% of its work before failing; the brief makes the failure visible to the next turn, and the human (or autopilot's next idle scan catching a dirty tree) is the right gate.
 
 **Convention for hook output:**
 
-Hooks may write a JSON summary to stdout's last line (e.g., `{"postgresPort": 5442, "projectName": "wt-abc123"}`). Parse if valid JSON and include in the final summary.
+Hooks MAY write a JSON summary to stdout's last line (e.g., `{"postgresPort": 5442, "projectName": "wt-abc123"}`). Parse if valid JSON and include in the final summary. This is **enrichment-only** — the JSON tail does NOT change `/fresh` control flow or override the post-hook `git branch --show-current` reading. There are no reserved keys.
+
+**Post-hook state capture** — ALWAYS run after the hook exits, regardless of exit code:
+
+```bash
+ACTUAL_BRANCH=$(git branch --show-current)
+```
+
+`ACTUAL_BRANCH` is what goes into the handoff brief's `**Branch now:**` field. If `ACTUAL_BRANCH != NEW_BRANCH` (the hook overrode the suggestion), the brief surfaces both.
 
 ## 6. Write the handoff brief
 
 Write `.agent/fresh-handoff.md` in the current worktree. This is what the NEXT agent turn (or a new session opened in this same dir) reads to pick up context.
 
 ```markdown
-# Fresh handoff — <NEW_BRANCH_NAME>
+# Fresh handoff — <ACTUAL_BRANCH>
 
 **Worktree:** `<WORKTREE_DIR>`
 **Previous branch:** `<OLD_BRANCH>` — <"had N unpushed commits, recover with git checkout <OLD_BRANCH>" | "clean, nothing unrecovered">
-**Base branch:** `<BASE_BRANCH>` (fetched <timestamp>)
+**Base branch (requested):** `<BASE_BRANCH>`
+**Reset status:** <one of: `built-in (clean)` | `built-in (discarded N files)` | `hook (exit 0)` | `hook (exit <code> — WARNING)` | `hook (skipped — not executable, ran built-in instead — WARNING)` | `hook (skipped via --skip-hook)`>
+**Branch now:** `<ACTUAL_BRANCH>`<if ACTUAL_BRANCH != NEW_BRANCH: ` (requested: <NEW_BRANCH>)`>
 **Created at:** <ISO 8601 timestamp>
+
+<if Reset status ends with "WARNING":>
+> ⚠️ The reset did not complete cleanly. Worktree state may be inconsistent with the requested task. Before resuming work, run `git status` and verify the branch and working tree are what you expect.
 
 ## Original request
 
@@ -256,10 +289,12 @@ Write `.agent/fresh-handoff.md` in the current worktree. This is what the NEXT a
 <if hook was invoked:>
 <exit code, last ~40 lines of hook stdout>
 <if JSON summary was parsed, include it as a key-value list>
-<if skipped:>
-Hook invocation was skipped (--skip-hook).
+<if skipped via --skip-hook:>
+Hook invocation was skipped (--skip-hook); built-in flow ran instead.
+<if not executable:>
+Hook file found at .glorious/hooks/fresh-reset but is not executable; built-in flow ran instead. `chmod +x` the hook if you intended for it to run.
 <if absent:>
-No `.glorious/hooks/fresh-reset` found; no repo-specific reset run.
+No `.glorious/hooks/fresh-reset` found; built-in flow ran.
 
 ## Expectations for the next agent turn
 
@@ -302,12 +337,18 @@ Assemble a compact summary. This is what the human sees.
 ```
 ✓ Worktree re-keyed
   Directory:     <WORKTREE_DIR>
-  Previous:      <OLD_BRANCH> → New: <NEW_BRANCH_NAME>
-  Base:          <BASE_BRANCH> (fetched just now)
+  Previous:      <OLD_BRANCH> → New: <ACTUAL_BRANCH>
+  Base:          <BASE_BRANCH> (requested)
   Discarded:     <"N files" if the tree was dirty, else "(clean)">
   Unpushed:      <"N commits preserved on <OLD_BRANCH>" if applicable, else "(none)">
-  Reset hook:    <"invoked successfully" | "invoked with warnings" | "skipped via --skip-hook" | "no hook present">
+  Reset:         <same RESET_STATUS string as brief>
   Handoff brief: .agent/fresh-handoff.md
+
+<if ACTUAL_BRANCH != NEW_BRANCH:>
+  Note: reset strategy switched to a different branch than requested (requested: <NEW_BRANCH>).
+
+<if RESET_STATUS contains "WARNING":>
+  ⚠️ Reset did not complete cleanly — check `git status` before resuming.
 
 <if hook emitted a JSON summary, print each key-value one per line>
 <if there are unpushed commits on the old branch:>
@@ -328,11 +369,14 @@ Recover previous work: git checkout <OLD_BRANCH>
 | 3 (dirty tree with tracked changes) | User intervention needed | Ask to discard | **Abort** with file list |
 | 3 (dirty tree with untracked non-gitignored files) | User intervention needed | Ask to discard | **Abort** with file list |
 | 3 (dirty tree, only gitignored debris) | Safe to clean | Ask to discard | **Proceed** silently |
-| 3 (discard runs) | `git clean -fdx` fails | Print error, abort | Same — don't proceed with partial state |
-| 4 (fetch) | Network/auth failure | Fall back to local tip of base, warn, continue | Same |
-| 4 (checkout) | Name collision despite step 2 safeguards | Abort — shouldn't reach here | Same |
-| 5 (hook invocation) | Hook exits non-zero | Print hook output as warning, continue to step 6 | Same |
-| 5 (hook missing) | No hook file | Skip silently — generic repos don't need one | Same |
+| 4 (dispatch) | Hook file present but non-executable | WARN, fall back to built-in (§5a) | Same |
+| 4 (dispatch) | `--skip-hook` with hook present | Log, fall back to built-in (§5a) | Same |
+| 5a (built-in fetch) | Network/auth failure | Fall back to local tip of base, warn, continue | Same |
+| 5a (built-in checkout) | Name collision despite §2 safeguards | Abort — shouldn't reach here | Same |
+| 5b (hook) | Hook exits non-zero | WARN, continue to §6; brief shows failure banner | Same |
+| 5b (hook) | Hook emits malformed JSON tail | Silent — enrichment is best-effort | Same |
+| 5b (hook) | Hook doesn't change branch (pure-cleanup) | `ACTUAL_BRANCH == OLD_BRANCH`; brief reflects that; autopilot still re-keys via mtime | Same |
+| 5b (hook) | Hook overrides `NEW_BRANCH` | `ACTUAL_BRANCH` from `git branch --show-current` goes into brief and summary | Same |
 | 6 (handoff brief write) | File-system error | Warn, continue — brief is nice-to-have | Same |
 | 6a (autopilot-state reset) | File or `jq` issue | Warn, continue — coordination is nice-to-have | Same |
 
@@ -349,9 +393,9 @@ When the user runs `/autopilot` with a project / milestone / queue reference, th
 **From `/fresh`'s side** (this command):
 
 - `--yes` suppresses every `question`-tool prompt. Autopilot cannot respond to them.
-- If the working tree has tracked changes or untracked non-gitignored files, `/fresh --yes` aborts. Autopilot treats this as a **hard stop** for the sequence, not "try next issue" — dirty tracked work means something went wrong in the previous iteration that requires human attention.
-- If the reset hook exits non-zero, `/fresh --yes` still completes (worktree is re-keyed, handoff brief written). Autopilot continues; the hook warning appears in the handoff brief.
-- `/fresh` writes `.agent/fresh-handoff.md` and resets `.agent/autopilot-state.json` iteration counters to 0. The autopilot plugin picks up from here: on its next session-idle scan, it sees the recent handoff brief + zeroed counter and injects a "new task started, read the handoff brief" nudge.
+- If the working tree has tracked changes or untracked non-gitignored files, `/fresh --yes` aborts. Autopilot treats this as a **hard stop** for the sequence, not "try next issue" — dirty tracked work means something went wrong in the previous iteration that requires human attention. This safety gate is owned by `/fresh`, not the reset strategy, which is what makes `--yes` abort semantics deterministic across repos (a hook cannot override them).
+- Whichever reset strategy runs (hook or built-in), `/fresh` always writes `.agent/fresh-handoff.md` and resets `.agent/autopilot-state.json` iteration counters to 0 after the reset completes. If the reset strategy exits non-zero, the brief is still written, with a prominent failure banner so the next turn sees it.
+- The autopilot plugin picks up from here: on its next session-idle scan, it sees the recent handoff brief + zeroed counter and injects a "new task started, read the handoff brief" nudge.
 
 **Summary of the handoff contract:**
 
@@ -371,13 +415,21 @@ autopilot queue    →    autopilot pops ref    →    /fresh <ref> --yes    →
 
 ## Hook contract, for repo authors
 
-A repo opts into `/fresh` reset behavior by providing an executable at `.glorious/hooks/fresh-reset`. It receives:
+A repo opts into a custom `/fresh` reset strategy by committing an executable file at `.glorious/hooks/fresh-reset` (committed to the repo, so it's automatically present in every worktree). It receives:
 
-- Env: `WORKTREE_DIR`, `WORKTREE_NAME`, `OLD_BRANCH`, `NEW_BRANCH`, `BASE_BRANCH`, `FRESH_PASSTHROUGH_ARGS`
-- Positional args: the pass-through args from `$ARGUMENTS`
+- **Env:** `WORKTREE_DIR`, `WORKTREE_NAME`, `OLD_BRANCH`, `NEW_BRANCH` (suggested), `BASE_BRANCH` (requested), `FRESH_PASSTHROUGH_ARGS`
+- **Positional args:** the pass-through args from `$ARGUMENTS`
 
-It is responsible for: scoping to this worktree only, stopping/cleaning processes and containers previously spun up here, resetting env files / port reservations, and re-running dep installation if lockfiles changed. It MUST NOT touch any other worktree. It exits 0 on success; any non-zero exit is a warning, not a fatal error. See `docs/fresh.md` in the glorious-opencode repo for a worked example (pnpm + docker compose + per-worktree Postgres slot reservation).
+It is responsible for: discarding the working tree appropriately (e.g., `git reset --hard HEAD && git clean -fdx`), switching to the new branch (e.g., `git fetch origin "$BASE_BRANCH" && git checkout -b "$NEW_BRANCH" "origin/$BASE_BRANCH"`), and any project-specific cleanup (stopping docker/compose projects scoped to this worktree, killing dev servers matched by `/proc/<pid>/cwd` or PID files, freeing port slots, regenerating `.env`, re-installing deps if lockfiles changed).
+
+It MUST NOT: touch any other worktree's directory/processes/containers, modify global state, or prompt the user (the `question` tool is agent-only; hooks run non-interactively). Scope filtering by `WORKTREE_NAME` or `WORKTREE_DIR` is mandatory if the hook uses broad tooling like `docker ps` or `ps`.
+
+It SHOULD: exit 0 on success; exit non-zero on failure. Non-zero is treated as a warning by `/fresh` (not fatal) — the brief still gets written with a failure banner so the next turn can see it. A partially-failed hook leaves the worktree in an unknown state; the banner surfaces this visibly.
+
+It MAY: emit a single-line JSON object on stdout's last line for summary enrichment (e.g., `{"postgresPort": 5442}`). This is enrichment-only; it does NOT alter `/fresh` control flow.
+
+Projects that want the built-in long-running-worktree flow ARE the default; they don't need a hook. Projects that want a hook for cleanup only, with the built-in flow still running, should copy the built-in commands (§5a) into their hook and add the cleanup on top — the two paths are mutually exclusive, so "augment" is achieved by the hook duplicating the built-in steps inline.
 
 ## One-sentence philosophy
 
-`/fresh` is the workspace equivalent of a fresh `git stash && git checkout -b`, but with process/container awareness, scoped narrowly to the worktree the user is already in, with zero terminal-tab or session churn.
+`/fresh` is a re-key protocol with a pluggable reset strategy: the default strategy is the long-running-worktree flow (discard → fetch → `checkout -b`); repos can ship their own strategy at `.glorious/hooks/fresh-reset`. Either way, `/fresh` owns the invariants — safety gates, handoff brief, autopilot integration — so those remain consistent across every repo that uses the harness.

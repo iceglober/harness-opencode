@@ -65,7 +65,7 @@ export function createCommands(): Record<string, CommandConfig> {
     fresh: {
       template: freshPrompt,
       description:
-        "Create a fresh worktree with an inferred branch name, then dispatch to repo-specific hooks. Requires gsag.",
+        "Re-key the current worktree to a new task. Runs the repo's .glorious/hooks/fresh-reset if present; otherwise discards local changes and creates a new branch from latest origin/<default>. Writes a handoff brief for agent continuity.",
     },
     costs: {
       template: costsPrompt,
