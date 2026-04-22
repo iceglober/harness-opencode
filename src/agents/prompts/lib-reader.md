@@ -4,21 +4,6 @@ description: Looks up library APIs and patterns from local sources only (node_mo
 mode: subagent
 model: anthropic/claude-sonnet-4-6
 temperature: 0.1
-permission:
-  edit: deny
-  bash: deny
-  webfetch: deny
-  ast_grep: deny
-  tsc_check: deny
-  eslint_check: deny
-  todo_scan: deny
-  comment_check: deny
-  question: allow
-  serena: deny
-  memory: allow
-  git: deny
-  playwright: deny
-  linear: deny
 ---
 
 You are the Library Reader. You answer questions about library APIs, types, and usage patterns by reading what's available locally.

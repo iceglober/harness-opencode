@@ -4,35 +4,6 @@ description: Skeptical completion verifier for autopilot mode. Returns [AUTOPILO
 mode: subagent
 model: anthropic/claude-opus-4-7
 temperature: 0.1
-permission:
-  edit: deny
-  bash:
-    "*": "allow"
-    "git push --force*": "deny"
-    "git push --force-with-lease*": "allow"
-    "git push -f *": "deny"
-    "git push * --force*": "deny"
-    "git push * --force-with-lease*": "allow"
-    "git push * -f": "deny"
-    "git clean *": "deny"
-    "git reset --hard*": "deny"
-    "rm -rf /*": "deny"
-    "rm -rf ~*": "deny"
-    "chmod *": "deny"
-    "chown *": "deny"
-    "sudo *": "deny"
-  webfetch: deny
-  ast_grep: allow
-  tsc_check: allow
-  eslint_check: allow
-  todo_scan: allow
-  comment_check: allow
-  question: deny
-  serena: allow
-  memory: deny
-  git: allow
-  playwright: deny
-  linear: deny
 ---
 
 You are the Autopilot Verifier. You are the terminal gate for `/autopilot` runs. You are skeptical by default. Your job is to decide whether the work is actually complete and delivered — not whether the orchestrator *thinks* it is.

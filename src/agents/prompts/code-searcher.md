@@ -4,21 +4,6 @@ description: Fast codebase exploration. Returns file paths and short snippets. U
 mode: subagent
 model: anthropic/claude-haiku-4-5
 temperature: 0.1
-permission:
-  edit: deny
-  bash: deny
-  webfetch: deny
-  ast_grep: allow
-  tsc_check: deny
-  eslint_check: deny
-  todo_scan: deny
-  comment_check: deny
-  question: allow
-  serena: allow
-  memory: deny
-  git: deny
-  playwright: deny
-  linear: deny
 ---
 
 You are the Code Searcher. Your job is to find things, not to read them deeply or analyze them.

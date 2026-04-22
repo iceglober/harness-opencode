@@ -4,21 +4,6 @@ description: Generates a single per-directory AGENTS.md file scoped to the direc
 mode: subagent
 model: anthropic/claude-sonnet-4-6
 temperature: 0.2
-permission:
-  edit: allow
-  bash: ask
-  webfetch: deny
-  ast_grep: allow
-  tsc_check: deny
-  eslint_check: deny
-  todo_scan: allow
-  comment_check: allow
-  question: allow
-  serena: allow
-  memory: deny
-  git: allow
-  playwright: deny
-  linear: deny
 ---
 
 You generate ONE per-directory `AGENTS.md` file scoped to the directory provided in your prompt.

@@ -116,6 +116,26 @@ function agentFromPrompt(
 
 // ---- Permission blocks (reused across primary agents) ----
 
+// Shared bash rule-map for read-only reviewers (qa-reviewer, autopilot-verifier).
+// These agents may run ANY non-destructive command but must never mutate history,
+// force-push, or touch the filesystem root.
+const NONDESTRUCTIVE_BASH_RULES = {
+  "*": "allow",
+  "git push --force*": "deny",
+  "git push --force-with-lease*": "allow",
+  "git push -f *": "deny",
+  "git push * --force*": "deny",
+  "git push * --force-with-lease*": "allow",
+  "git push * -f": "deny",
+  "git clean *": "deny",
+  "git reset --hard*": "deny",
+  "rm -rf /*": "deny",
+  "rm -rf ~*": "deny",
+  "chmod *": "deny",
+  "chown *": "deny",
+  "sudo *": "deny",
+} as const;
+
 const ORCHESTRATOR_PERMISSIONS = {
   edit: "allow" as const,
   bash: {
@@ -208,6 +228,148 @@ const BUILD_PERMISSIONS = {
   linear: "allow",
 };
 
+// ---- Subagent permission blocks ----
+// Values mirror what was previously (ineffectively) declared in each
+// subagent's `.md` frontmatter. Moving to TS constants so overrides
+// actually reach AgentConfig — the flat YAML parser silently dropped
+// the nested `permission:` maps, and `agentFromPrompt` never read them.
+
+const QA_REVIEWER_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: { ...NONDESTRUCTIVE_BASH_RULES },
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "allow",
+  eslint_check: "allow",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",
+  serena: "allow",
+  memory: "deny",
+  git: "allow",
+  playwright: "allow",
+  linear: "deny",
+};
+
+const AUTOPILOT_VERIFIER_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: { ...NONDESTRUCTIVE_BASH_RULES },
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "allow",
+  eslint_check: "allow",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "deny",        // hard rule: verifier never asks
+  serena: "allow",
+  memory: "deny",
+  git: "allow",
+  playwright: "deny",
+  linear: "deny",
+};
+
+const PLAN_REVIEWER_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: "deny" as const,
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "deny",
+  eslint_check: "deny",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",
+  serena: "allow",
+  memory: "deny",
+  git: "allow",
+  playwright: "deny",
+  linear: "deny",
+};
+
+const GAP_ANALYZER_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: "deny" as const,
+  webfetch: "deny" as const,
+  ast_grep: "deny",
+  tsc_check: "deny",
+  eslint_check: "deny",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",
+  serena: "allow",
+  memory: "allow",
+  git: "deny",
+  playwright: "deny",
+  linear: "allow",
+};
+
+const CODE_SEARCHER_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: "deny" as const,
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "deny",
+  eslint_check: "deny",
+  todo_scan: "deny",
+  comment_check: "deny",
+  question: "allow",
+  serena: "allow",
+  memory: "deny",
+  git: "deny",
+  playwright: "deny",
+  linear: "deny",
+};
+
+const ARCHITECTURE_ADVISOR_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: "deny" as const,
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "deny",
+  eslint_check: "deny",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",
+  serena: "allow",
+  memory: "allow",
+  git: "allow",
+  playwright: "deny",
+  linear: "allow",
+};
+
+const LIB_READER_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: "deny" as const,
+  webfetch: "deny" as const,
+  ast_grep: "deny",
+  tsc_check: "deny",
+  eslint_check: "deny",
+  todo_scan: "deny",
+  comment_check: "deny",
+  question: "allow",
+  serena: "deny",
+  memory: "allow",
+  git: "deny",
+  playwright: "deny",
+  linear: "deny",
+};
+
+const AGENTS_MD_WRITER_PERMISSIONS = {
+  edit: "allow" as const,
+  bash: "ask" as const,         // preserve ask-semantics from frontmatter
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "deny",
+  eslint_check: "deny",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",
+  serena: "allow",
+  memory: "deny",
+  git: "allow",
+  playwright: "deny",
+  linear: "deny",
+};
+
 // ---- Public API ----
 
 export function createAgents(): Record<string, AgentConfig> {
@@ -235,15 +397,33 @@ export function createAgents(): Record<string, AgentConfig> {
       permission: BUILD_PERMISSIONS as AgentConfig["permission"],
     }),
 
-    // Subagents — model/mode/description from frontmatter
-    "qa-reviewer": agentFromPrompt(qaReviewerPrompt),
-    "plan-reviewer": agentFromPrompt(planReviewerPrompt),
-    "autopilot-verifier": agentFromPrompt(autopilotVerifierPrompt),
-    "code-searcher": agentFromPrompt(codeSearcherPrompt),
-    "gap-analyzer": agentFromPrompt(gapAnalyzerPrompt),
-    "architecture-advisor": agentFromPrompt(architectureAdvisorPrompt),
+    // Subagents — model/mode/description from frontmatter, permissions
+    // via overrides (see permission blocks above). docs-maintainer has no
+    // frontmatter permission declaration and keeps that behavior.
+    "qa-reviewer": agentFromPrompt(qaReviewerPrompt, {
+      permission: QA_REVIEWER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "plan-reviewer": agentFromPrompt(planReviewerPrompt, {
+      permission: PLAN_REVIEWER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "autopilot-verifier": agentFromPrompt(autopilotVerifierPrompt, {
+      permission: AUTOPILOT_VERIFIER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "code-searcher": agentFromPrompt(codeSearcherPrompt, {
+      permission: CODE_SEARCHER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "gap-analyzer": agentFromPrompt(gapAnalyzerPrompt, {
+      permission: GAP_ANALYZER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "architecture-advisor": agentFromPrompt(architectureAdvisorPrompt, {
+      permission: ARCHITECTURE_ADVISOR_PERMISSIONS as AgentConfig["permission"],
+    }),
     "docs-maintainer": agentFromPrompt(docsMaintainerPrompt),
-    "lib-reader": agentFromPrompt(libReaderPrompt),
-    "agents-md-writer": agentFromPrompt(agentsMdWriterPrompt),
+    "lib-reader": agentFromPrompt(libReaderPrompt, {
+      permission: LIB_READER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "agents-md-writer": agentFromPrompt(agentsMdWriterPrompt, {
+      permission: AGENTS_MD_WRITER_PERMISSIONS as AgentConfig["permission"],
+    }),
   };
 }

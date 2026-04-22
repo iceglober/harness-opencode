@@ -102,7 +102,7 @@ async function checkForUpdate(client: any): Promise<void> {
 
 // ---- Config hook ----
 
-function applyConfig(config: Config): void {
+export function applyConfig(config: Config): void {
   // Agents: user-wins (user's opencode.json overrides our defaults)
   const ourAgents = createAgents();
   (config as any).agent = { ...ourAgents, ...((config as any).agent ?? {}) };
@@ -165,6 +165,12 @@ function applyConfig(config: Config): void {
     ...existingPermission,
     external_directory: {
       "~/.glorious/worktrees/**": "allow",
+      "/tmp/**": "allow",
+      "/private/tmp/**": "allow",          // macOS: /tmp symlinks to /private/tmp
+      "/var/folders/**/T/**": "allow",     // macOS $TMPDIR expansion
+      "~/.config/opencode/**": "allow",    // OpenCode's own config dir — agents read it routinely
+      "~/.cache/**": "allow",              // XDG cache dir — tooling (npm, pip, etc.) writes here
+      "~/.local/share/**": "allow",        // XDG data dir — Linear MCP cache, etc.
       ...existingExtDir,
     },
   };

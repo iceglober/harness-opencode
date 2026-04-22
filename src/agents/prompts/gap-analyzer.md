@@ -4,21 +4,6 @@ description: Pre-planning gap analyzer. Surfaces hidden requirements and ambigui
 mode: subagent
 model: anthropic/claude-opus-4-7
 temperature: 0.5
-permission:
-  edit: deny
-  bash: deny
-  webfetch: deny
-  ast_grep: deny
-  tsc_check: deny
-  eslint_check: deny
-  todo_scan: allow
-  comment_check: allow
-  question: allow
-  serena: allow
-  memory: allow
-  git: deny
-  playwright: deny
-  linear: allow
 ---
 
 You are the Gap Analyzer. Given a user request and the planner's current understanding, your job is to find what's missing.

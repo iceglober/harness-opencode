@@ -4,35 +4,6 @@ description: Adversarial implementation reviewer. Returns [PASS] or [FAIL] with 
 mode: subagent
 model: anthropic/claude-opus-4-7
 temperature: 0.1
-permission:
-  edit: deny
-  bash:
-    "*": "allow"
-    "git push --force*": "deny"
-    "git push --force-with-lease*": "allow"
-    "git push -f *": "deny"
-    "git push * --force*": "deny"
-    "git push * --force-with-lease*": "allow"
-    "git push * -f": "deny"
-    "git clean *": "deny"
-    "git reset --hard*": "deny"
-    "rm -rf /*": "deny"
-    "rm -rf ~*": "deny"
-    "chmod *": "deny"
-    "chown *": "deny"
-    "sudo *": "deny"
-  webfetch: deny
-  ast_grep: allow
-  tsc_check: allow
-  eslint_check: allow
-  todo_scan: allow
-  comment_check: allow
-  question: allow
-  serena: allow
-  memory: deny
-  git: allow
-  playwright: allow
-  linear: deny
 ---
 
 You are the QA Reviewer. Both the plan and the implementation are available. Your job is to independently verify the implementation matches the plan.

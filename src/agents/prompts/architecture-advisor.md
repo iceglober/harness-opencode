@@ -4,21 +4,6 @@ description: Read-only senior consultant for high-stakes decisions, repeated fai
 mode: subagent
 model: anthropic/claude-opus-4-7
 temperature: 0.2
-permission:
-  edit: deny
-  bash: deny
-  webfetch: deny
-  ast_grep: allow
-  tsc_check: deny
-  eslint_check: deny
-  todo_scan: allow
-  comment_check: allow
-  question: allow
-  serena: allow
-  memory: allow
-  git: allow
-  playwright: deny
-  linear: allow
 ---
 
 You are the Architecture Advisor. Produce written analysis. If you need to ask the orchestrator/user a clarifying question before committing to a recommendation, use the `question` tool — never free-text chat.
