@@ -33,6 +33,7 @@ const orchestratorPrompt = readPrompt("orchestrator.md");
 const planPrompt = readPrompt("plan.md");
 const buildPrompt = readPrompt("build.md");
 const qaReviewerPrompt = readPrompt("qa-reviewer.md");
+const qaThoroughPrompt = readPrompt("qa-thorough.md");
 const planReviewerPrompt = readPrompt("plan-reviewer.md");
 const autopilotVerifierPrompt = readPrompt("autopilot-verifier.md");
 const codeSearcherPrompt = readPrompt("code-searcher.md");
@@ -251,6 +252,28 @@ const QA_REVIEWER_PERMISSIONS = {
   linear: "deny",
 };
 
+// qa-thorough has an identical permission shape to qa-reviewer — both are
+// read-only adversarial reviewers that need `git log` for scope-creep
+// verification and bash allow-all-nondestructive for running lint/test/
+// typecheck (qa-thorough always, qa-reviewer conditionally via trust-recent-
+// green). They differ only in model, description, and prompt body.
+const QA_THOROUGH_PERMISSIONS = {
+  edit: "deny" as const,
+  bash: { ...NONDESTRUCTIVE_BASH_RULES },
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "allow",
+  eslint_check: "allow",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",
+  serena: "allow",
+  memory: "deny",
+  git: "allow",
+  playwright: "allow",
+  linear: "deny",
+};
+
 const AUTOPILOT_VERIFIER_PERMISSIONS = {
   edit: "deny" as const,
   bash: { ...NONDESTRUCTIVE_BASH_RULES },
@@ -402,6 +425,9 @@ export function createAgents(): Record<string, AgentConfig> {
     // frontmatter permission declaration and keeps that behavior.
     "qa-reviewer": agentFromPrompt(qaReviewerPrompt, {
       permission: QA_REVIEWER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "qa-thorough": agentFromPrompt(qaThoroughPrompt, {
+      permission: QA_THOROUGH_PERMISSIONS as AgentConfig["permission"],
     }),
     "plan-reviewer": agentFromPrompt(planReviewerPrompt, {
       permission: PLAN_REVIEWER_PERMISSIONS as AgentConfig["permission"],

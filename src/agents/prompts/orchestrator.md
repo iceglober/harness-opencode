@@ -269,7 +269,24 @@ Final verification before declaring complete:
 - Run the project's typecheck/build command if applicable. It must pass. (e.g., `pnpm typecheck`, `tsc --noEmit`, `mypy`, `cargo check`.)
 - Run `git diff --stat` and confirm the changed files match the plan's `## File-level changes` (for non-trivial work).
 
-Then delegate to `@qa-reviewer` with the plan path (or for trivial work: just describe what was changed in one sentence and ask for review).
+Then delegate to the QA reviewer. Pick between two variants deterministically:
+
+- **`@qa-thorough`** (Opus, re-runs full lint/test/typecheck) if ANY of: diff touches >10 files, diff >500 lines (from `git diff --shortstat`), plan declares `Risk: high` on any file, OR the diff touches any file under a security/auth/crypto/billing/migration-sensitive path (e.g., `auth/`, `crypto/`, `billing/`, `migrations/`, files named `*.sql`, files whose path contains `secret`, `token`, or `password`).
+- **`@qa-reviewer`** (Sonnet, fast, trusts recent green output) otherwise. This is the default.
+
+For trivial work (Phase 1 decided no plan), just describe what was changed in one sentence and ask `@qa-reviewer` for review.
+
+**When delegating to `@qa-reviewer` (fast), include in the delegation prompt a session-green summary using these exact phrases:**
+
+```
+tests passed at <ISO-8601 timestamp>
+lint passed at <ISO-8601 timestamp>
+typecheck passed at <ISO-8601 timestamp>
+```
+
+Use the timestamps from when you actually ran those commands green in this session. If you did NOT run a given command green this session, OMIT that line — do not fabricate. `@qa-reviewer` keys its trust-recent-green heuristic on these literal phrases and will re-run any command whose timestamp line is absent.
+
+When delegating to `@qa-thorough`, no session-green summary is needed — qa-thorough re-runs everything unconditionally.
 
 On `[FAIL]`: fix each reported issue. Re-run final verification. Re-delegate to `@qa-reviewer`. No retry limit.
 
@@ -298,12 +315,14 @@ STOP at Phase 5 — don't push or open a PR without the user's explicit `/ship` 
 - If the user types anything during execution, treat it as either: (a) a course correction to apply, or (b) a halt request. Default to halt-and-ask if ambiguous.
 - Use `@code-searcher` for any search that might return > 30 hits. Don't pollute your own context with grep dumps.
 - Use `@architecture-advisor` if you fail at the same task twice. Don't try a third time without consultation.
+- **Log confirmed pre-existing failures to the plan.** When you investigate a failing test during Phase 3 execution and confirm it is pre-existing / unrelated to the current change (e.g., verified via `git stash` against the base branch, or by `git log --oneline -- <file>` showing the failure pre-dates this branch), you MUST use the `edit` tool to append a bullet to the plan file's `## Open questions` section BEFORE proceeding with further work. Bullet format (verbatim, with your specifics substituted): `- Pre-existing failure confirmed in <file>::<test-name> — not introduced by this change. Recommend separate cleanup.` Without this step, the finding dies with the session and the next qa run re-investigates the same failure. If the plan has no `## Open questions` section, create one at the end of the file before appending.
 
 # Subagent reference (recap)
 
 - `@plan` — writes `.agent/plans/<slug>.md` and runs its own gap-analysis + adversarial-review loop. Orchestrator delegates Phase 2 plan authoring here.
 - `@code-searcher` — fast codebase grep + structural search, returns paths and short snippets
 - `@lib-reader` — local-only docs/library lookups (node_modules, type defs, project docs)
-- `@qa-reviewer` — adversarial implementation review, returns `[PASS]` or `[FAIL]`. Orchestrator calls this directly in Phase 4.
+- `@qa-reviewer` — fast adversarial reviewer (Sonnet). Trusts the orchestrator's recent green output within this session, focuses on semantic + scope checks. Default for Phase 4.
+- `@qa-thorough` — thorough adversarial reviewer (Opus). Re-runs full lint/test/typecheck. Use for large/high-risk diffs per the Phase 4 heuristic.
 - `@architecture-advisor` — read-only senior consultant for hard decisions
 - `@gap-analyzer`, `@plan-reviewer` — internal subagents used by `@plan`. Orchestrator does NOT invoke these directly; route plan-authoring work through `@plan` instead.
