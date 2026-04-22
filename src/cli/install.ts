@@ -9,10 +9,41 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 import { mergeConfig, seedConfig } from "./merge-config.js";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
-const PACKAGE_VERSION = "0.1.0"; // updated by release pipeline
+
+/**
+ * Read the plugin's version from its package.json. This is the single source
+ * of truth — avoids drift between a hardcoded constant and the published
+ * version (see: 0.1.0 hardcoded while the package shipped at 0.1.2).
+ *
+ * At runtime, `install.ts` is bundled into `dist/cli.js`, so package.json
+ * sits one directory up. During tests, the source file is loaded directly,
+ * so package.json sits two directories up (src/cli/ → repo root).
+ */
+function readPackageVersion(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(here, "..", "package.json"), // dist/cli.js → dist/../package.json
+    path.join(here, "..", "..", "package.json"), // src/cli/install.ts → src/../../package.json
+  ];
+  for (const candidate of candidates) {
+    try {
+      const raw = fs.readFileSync(candidate, "utf8");
+      const parsed = JSON.parse(raw) as { name?: string; version?: string };
+      if (parsed.name === PLUGIN_NAME && typeof parsed.version === "string") {
+        return parsed.version;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error(
+    `Could not locate ${PLUGIN_NAME}'s package.json to read version`,
+  );
+}
 
 function getOpencodeConfigPath(): string {
   const configHome =
@@ -36,7 +67,7 @@ export interface InstallOptions {
 export function install(opts: InstallOptions = {}): void {
   const { dryRun = false, pin = false } = opts;
   const configPath = getOpencodeConfigPath();
-  const pluginEntry = pin ? `${PLUGIN_NAME}@${PACKAGE_VERSION}` : PLUGIN_NAME;
+  const pluginEntry = pin ? `${PLUGIN_NAME}@${readPackageVersion()}` : PLUGIN_NAME;
 
   const c = {
     reset: "\x1b[0m",
