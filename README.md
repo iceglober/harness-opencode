@@ -11,7 +11,7 @@ An opinionated OpenCode agent harness — orchestrator, plan, build, QA, skills,
 ## What you get
 
 - **Primary agents** — `orchestrator` (five-phase end-to-end), `plan` (interactive planner), `build` (plan executor)
-- **Subagents** — `gap-analyzer`, `plan-reviewer`, `qa-reviewer`, `autopilot-verifier`, `code-searcher`, `lib-reader`, `architecture-advisor`, `docs-maintainer`, `agents-md-writer`
+- **Subagents** — `gap-analyzer`, `plan-reviewer`, `qa-reviewer`, `code-searcher`, `lib-reader`, `architecture-advisor`, `docs-maintainer`, `agents-md-writer`
 - **Slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`, `/fresh`, `/costs`
 - **Generic skills** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
 - **OpenCode tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`

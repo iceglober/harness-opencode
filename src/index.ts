@@ -30,7 +30,7 @@ import {
   refreshPluginCache,
 } from "./auto-update.js";
 
-// Sub-plugins (autopilot completion loop + OS notifications + cost tracking)
+// Sub-plugins (autopilot idle-nudge loop + OS notifications + cost tracking)
 import autopilotPlugin from "./plugins/autopilot.js";
 import notifyPlugin from "./plugins/notify.js";
 import costTrackerPlugin from "./plugins/cost-tracker.js";
@@ -240,15 +240,8 @@ const plugin: Plugin = async (input) => {
       if (costTrackerHooks.event) await costTrackerHooks.event(input);
     },
 
-    // chat.params from autopilot (drives the completion-promise loop)
-    "chat.params": autopilotHooks["chat.params"],
-
-    // chat.message from autopilot
+    // chat.message from autopilot (resets iterations on user message)
     "chat.message": autopilotHooks["chat.message"],
-
-    // Compaction hook from autopilot
-    "experimental.session.compacting":
-      autopilotHooks["experimental.session.compacting"],
   };
 
   return hooks;

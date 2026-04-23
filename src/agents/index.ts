@@ -35,7 +35,6 @@ const buildPrompt = readPrompt("build.md");
 const qaReviewerPrompt = readPrompt("qa-reviewer.md");
 const qaThoroughPrompt = readPrompt("qa-thorough.md");
 const planReviewerPrompt = readPrompt("plan-reviewer.md");
-const autopilotVerifierPrompt = readPrompt("autopilot-verifier.md");
 const codeSearcherPrompt = readPrompt("code-searcher.md");
 const gapAnalyzerPrompt = readPrompt("gap-analyzer.md");
 const architectureAdvisorPrompt = readPrompt("architecture-advisor.md");
@@ -117,7 +116,7 @@ function agentFromPrompt(
 
 // ---- Permission blocks (reused across primary agents) ----
 
-// Read-only reviewers (qa-reviewer, qa-thorough, autopilot-verifier) use
+// Read-only reviewers (qa-reviewer, qa-thorough) use
 // `bash: "allow"` — destructive-command safety is enforced at the global
 // `permission.bash` layer in src/index.ts (applyConfig), and each agent's
 // system prompt forbids destructive operations. An earlier per-subagent
@@ -262,23 +261,6 @@ const QA_THOROUGH_PERMISSIONS = {
   linear: "deny",
 };
 
-const AUTOPILOT_VERIFIER_PERMISSIONS = {
-  edit: "deny" as const,
-  bash: "allow" as const,
-  webfetch: "deny" as const,
-  ast_grep: "allow",
-  tsc_check: "allow",
-  eslint_check: "allow",
-  todo_scan: "allow",
-  comment_check: "allow",
-  question: "deny",        // hard rule: verifier never asks
-  serena: "allow",
-  memory: "deny",
-  git: "allow",
-  playwright: "deny",
-  linear: "deny",
-};
-
 const PLAN_REVIEWER_PERMISSIONS = {
   edit: "deny" as const,
   bash: "deny" as const,
@@ -419,9 +401,6 @@ export function createAgents(): Record<string, AgentConfig> {
     }),
     "plan-reviewer": agentFromPrompt(planReviewerPrompt, {
       permission: PLAN_REVIEWER_PERMISSIONS as AgentConfig["permission"],
-    }),
-    "autopilot-verifier": agentFromPrompt(autopilotVerifierPrompt, {
-      permission: AUTOPILOT_VERIFIER_PERMISSIONS as AgentConfig["permission"],
     }),
     "code-searcher": agentFromPrompt(codeSearcherPrompt, {
       permission: CODE_SEARCHER_PERMISSIONS as AgentConfig["permission"],
