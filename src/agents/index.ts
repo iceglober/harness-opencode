@@ -117,25 +117,13 @@ function agentFromPrompt(
 
 // ---- Permission blocks (reused across primary agents) ----
 
-// Shared bash rule-map for read-only reviewers (qa-reviewer, autopilot-verifier).
-// These agents may run ANY non-destructive command but must never mutate history,
-// force-push, or touch the filesystem root.
-const NONDESTRUCTIVE_BASH_RULES = {
-  "*": "allow",
-  "git push --force*": "deny",
-  "git push --force-with-lease*": "allow",
-  "git push -f *": "deny",
-  "git push * --force*": "deny",
-  "git push * --force-with-lease*": "allow",
-  "git push * -f": "deny",
-  "git clean *": "deny",
-  "git reset --hard*": "deny",
-  "rm -rf /*": "deny",
-  "rm -rf ~*": "deny",
-  "chmod *": "deny",
-  "chown *": "deny",
-  "sudo *": "deny",
-} as const;
+// Read-only reviewers (qa-reviewer, qa-thorough, autopilot-verifier) use
+// `bash: "allow"` — destructive-command safety is enforced at the global
+// `permission.bash` layer in src/index.ts (applyConfig), and each agent's
+// system prompt forbids destructive operations. An earlier per-subagent
+// object-form rule-map was apparently misfiring on pipelined read-only
+// commands (e.g. `git show <ref>:<path> | sed -n 'N,Mp'`), producing
+// permission-ask prompts that broke review flow.
 
 const ORCHESTRATOR_PERMISSIONS = {
   edit: "allow" as const,
@@ -237,7 +225,7 @@ const BUILD_PERMISSIONS = {
 
 const QA_REVIEWER_PERMISSIONS = {
   edit: "deny" as const,
-  bash: { ...NONDESTRUCTIVE_BASH_RULES },
+  bash: "allow" as const,
   webfetch: "deny" as const,
   ast_grep: "allow",
   tsc_check: "allow",
@@ -253,13 +241,13 @@ const QA_REVIEWER_PERMISSIONS = {
 };
 
 // qa-thorough has an identical permission shape to qa-reviewer — both are
-// read-only adversarial reviewers that need `git log` for scope-creep
-// verification and bash allow-all-nondestructive for running lint/test/
-// typecheck (qa-thorough always, qa-reviewer conditionally via trust-recent-
-// green). They differ only in model, description, and prompt body.
+// read-only adversarial reviewers that need bash access for `git log`
+// scope-creep verification and running lint/test/typecheck (qa-thorough
+// always, qa-reviewer conditionally via trust-recent-green). They differ
+// only in model, description, and prompt body.
 const QA_THOROUGH_PERMISSIONS = {
   edit: "deny" as const,
-  bash: { ...NONDESTRUCTIVE_BASH_RULES },
+  bash: "allow" as const,
   webfetch: "deny" as const,
   ast_grep: "allow",
   tsc_check: "allow",
@@ -276,7 +264,7 @@ const QA_THOROUGH_PERMISSIONS = {
 
 const AUTOPILOT_VERIFIER_PERMISSIONS = {
   edit: "deny" as const,
-  bash: { ...NONDESTRUCTIVE_BASH_RULES },
+  bash: "allow" as const,
   webfetch: "deny" as const,
   ast_grep: "allow",
   tsc_check: "allow",

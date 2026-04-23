@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createAgents } from "../src/agents/index.js";
+import { applyConfig } from "../src/index.js";
 
 describe("createAgents", () => {
   const agents = createAgents();
@@ -138,55 +139,24 @@ describe("subagent permissions", () => {
     expect((cfg as any).permission).toBeUndefined();
   });
 
-  it("qa-reviewer bash map allows-all-then-denies-destructive", () => {
+  it("qa-reviewer bash is plain \"allow\" string", () => {
+    // Regression target for the pipelined-command permission-ask bug:
+    // the agent-level bash permission must be the plain string "allow",
+    // not an object rule-map. Destructive-command safety is enforced at
+    // the global permission.bash layer (see test "applyConfig global bash
+    // block denies destructive commands" below).
     const bash = (agents["qa-reviewer"] as any).permission.bash;
-    expect(typeof bash).toBe("object");
-    expect(bash["*"]).toBe("allow");
-    expect(bash["git push --force*"]).toBe("deny");
-    expect(bash["rm -rf /*"]).toBe("deny");
-    expect(bash["sudo *"]).toBe("deny");
+    expect(bash).toBe("allow");
   });
 
-  const READ_ONLY_GIT_COMMANDS = [
-    "git log --oneline -5",
-    "git merge-base HEAD main",
-    "git diff --name-only 2f356893d..HEAD",
-    "git diff",
-    "git status",
-    "git branch --show-current",
-  ];
-
-  const assertReadOnlyGitAllowed = (bash: Record<string, string>) => {
-    const denyKeys = Object.entries(bash)
-      .filter(([, v]) => v === "deny")
-      .map(([k]) => k);
-    for (const cmd of READ_ONLY_GIT_COMMANDS) {
-      for (const denyKey of denyKeys) {
-        // Convert glob-style to regex: "*" → ".*", escape other metachars.
-        const regex = new RegExp(
-          "^" +
-            denyKey
-              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-              .replace(/\*/g, ".*") +
-            "$",
-        );
-        expect(regex.test(cmd)).toBe(false);
-      }
-    }
-  };
-
-  it("qa-reviewer allows read-only git (log, merge-base, diff, status)", () => {
-    // Regression test: the reported friction commands must hit the
-    // "*": "allow" rule with no more-specific deny overriding them.
-    const bash = (agents["qa-reviewer"] as any).permission.bash;
-    assertReadOnlyGitAllowed(bash);
-  });
-
-  it("qa-thorough allows read-only git (log, merge-base, diff, status)", () => {
-    // Same regression guarantee as qa-reviewer — both variants need
-    // `git log -- <file>` for scope-creep verification.
+  it("qa-thorough bash is plain \"allow\" string", () => {
     const bash = (agents["qa-thorough"] as any).permission.bash;
-    assertReadOnlyGitAllowed(bash);
+    expect(bash).toBe("allow");
+  });
+
+  it("autopilot-verifier bash is plain \"allow\" string", () => {
+    const bash = (agents["autopilot-verifier"] as any).permission.bash;
+    expect(bash).toBe("allow");
   });
 
   it("qa-thorough permission block matches qa-reviewer shape", () => {
@@ -210,11 +180,9 @@ describe("subagent permissions", () => {
     ]) {
       expect(qt[key]).toBe(qr[key]);
     }
-    // Bash rule-map keys must match
-    expect(Object.keys(qt.bash).sort()).toEqual(Object.keys(qr.bash).sort());
-    for (const k of Object.keys(qr.bash)) {
-      expect(qt.bash[k]).toBe(qr.bash[k]);
-    }
+    // Bash is now a plain string; assert both are the same string value.
+    expect(qt.bash).toBe(qr.bash);
+    expect(qr.bash).toBe("allow");
   });
 
   it("autopilot-verifier permissions preserve frontmatter values", () => {
@@ -226,7 +194,22 @@ describe("subagent permissions", () => {
     expect(perm.playwright).toBe("deny");
     expect(perm.linear).toBe("deny");
     expect(perm.serena).toBe("allow");
-    expect(perm.bash["*"]).toBe("allow");
+    expect(perm.bash).toBe("allow");
+  });
+
+  it("src/agents/index.ts no longer contains NONDESTRUCTIVE_BASH_RULES", () => {
+    // Lock in the dead-code removal: the per-subagent object-form rule-map
+    // was replaced by the plain-string form, and the shared constant was
+    // deleted. Guards against accidental reintroduction.
+    const sourcePath = path.join(
+      import.meta.dir,
+      "..",
+      "src",
+      "agents",
+      "index.ts",
+    );
+    const source = fs.readFileSync(sourcePath, "utf8");
+    expect(source).not.toContain("NONDESTRUCTIVE_BASH_RULES");
   });
 
   it("read-only subagents have bash: deny", () => {
@@ -352,5 +335,45 @@ describe("prompt content assertions", () => {
   it("orchestrator subagent reference lists both qa-reviewer and qa-thorough", () => {
     expect(orchestrator).toMatch(/- `@qa-reviewer`/);
     expect(orchestrator).toMatch(/- `@qa-thorough`/);
+  });
+});
+
+describe("applyConfig — global bash safety net", () => {
+  // Agent-level read-only reviewers (qa-reviewer, qa-thorough, autopilot-
+  // verifier) now delegate destructive-command denial entirely to this
+  // global layer. Lock in the deny rules so the safety net can't be
+  // accidentally removed alongside future agent-level permission cleanup.
+
+  it("applyConfig global bash block denies destructive commands", () => {
+    const config: any = {};
+    applyConfig(config);
+    const bash = config.permission?.bash;
+    expect(typeof bash).toBe("object");
+    expect(bash).not.toBeNull();
+    // Catch-all allow must be present.
+    expect(bash["*"]).toBe("allow");
+    // Core destructive-command denies must all be present.
+    expect(bash["git push --force*"]).toBe("deny");
+    expect(bash["git push -f *"]).toBe("deny");
+    expect(bash["git push * --force*"]).toBe("deny");
+    expect(bash["git push * -f"]).toBe("deny");
+    expect(bash["rm -rf /*"]).toBe("deny");
+    expect(bash["rm -rf ~*"]).toBe("deny");
+    expect(bash["chmod *"]).toBe("deny");
+    expect(bash["chown *"]).toBe("deny");
+    expect(bash["sudo *"]).toBe("deny");
+    // --force-with-lease must remain allowed (safe force-push).
+    expect(bash["git push --force-with-lease*"]).toBe("allow");
+    expect(bash["git push * --force-with-lease*"]).toBe("allow");
+  });
+
+  it("applyConfig preserves user-supplied permission.bash without overwriting", () => {
+    // User-wins semantics: if the user sets permission.bash in their
+    // opencode.json, our defaults must NOT overwrite it.
+    const userBash = { "*": "ask", "git status *": "allow" };
+    const config: any = { permission: { bash: userBash } };
+    applyConfig(config);
+    expect(config.permission.bash).toBe(userBash);
+    expect(config.permission.bash["*"]).toBe("ask");
   });
 });
