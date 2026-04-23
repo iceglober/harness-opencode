@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.6.1
+
+### Patch Changes
+
+- [#65](https://github.com/iceglober/harness-opencode/pull/65) [`c59c875`](https://github.com/iceglober/harness-opencode/commit/c59c8757bfca0311d6eb5de146ae6c46bdd8dd8b) Thanks [@iceglober](https://github.com/iceglober)! - Two friction fixes so `/fresh` is actually friction-free, not just nominally so:
+
+  1. **`/fresh` no longer asks to confirm discarding uncommitted changes.** Running `/fresh` is itself the intent to discard; the interactive default has always been "wipe silently" per spec, but the prompt was hedged enough that the agent kept synthesizing a confirmation anyway (notably for untracked non-gitignored files like `.opencode/package-lock.json`). Added a loud top-of-prompt directive enumerating the only two permissible `question`-tool cases (`--confirm` was passed, or the input had no ref) and reinforced the "only under `--confirm`" guard at §3. No behavior change in `--confirm` or `--yes` modes.
+
+  2. **Plugin now self-updates the OpenCode cache instead of asking users to run `bun update`.** Context: OpenCode caches the plugin at `~/.cache/opencode/packages/@glrs-dev/harness-opencode@latest/` with an exact version pin baked into that dir's `package.json` and `package-lock.json` — so `bun update` from anywhere else is a no-op, and users silently drift behind for releases. (Symptom: users on 0.1.2 still hitting the `/tmp/**` external-directory prompts that were fixed in 0.3.0.) The daily update check now rewrites that cache dir's pin to the latest version and removes its `node_modules/`, so the next OpenCode restart re-installs fresh. The toast copy is now "next restart will auto-update" instead of "run bun update." Writes are atomic (tmp + rename), skip non-exact user-managed pins, and require name-match against our package. `HARNESS_OPENCODE_AUTO_UPDATE=0` disables just the rewrite; `HARNESS_OPENCODE_UPDATE_CHECK=0` still disables the whole thing.
+
+  Bonus: fixes a drift bug where `BUNDLED_VERSION` was hardcoded to `"0.1.2"` in source (comment lied — release pipeline never actually patched it). It's now read from `package.json` at module load, so the running version always matches the shipped package.
+
+- [#68](https://github.com/iceglober/harness-opencode/pull/68) [`03d5352`](https://github.com/iceglober/harness-opencode/commit/03d5352ba1ed92d4c69452ed7dc9d01148a9194d) Thanks [@iceglober](https://github.com/iceglober)! - **Fix: OpenCode no longer crashes at startup with `TypeError: undefined is not an object (evaluating 'V[G]' / 'S.auth' / 'M.config')` when the harness plugin is enabled.**
+
+  This has been silently broken since **v0.3.0** (~commit `e5ffb7c`). Users on v0.3.0–v0.6.0 saw one of several minified-variable error shapes depending on OpenCode version:
+
+  - `TypeError: undefined is not an object (evaluating 'V[G]')`
+  - `TypeError: undefined is not an object (evaluating 'f.auth')`
+  - `TypeError: undefined is not an object (evaluating 'M.config')`
+
+  All the same bug. The `oc` command would refuse to start in any worktree with the plugin enabled via `~/.config/opencode/opencode.json`.
+
+  ## Root cause
+
+  In commit `e5ffb7c` (v0.3.0, "wire subagent permissions via TS overrides + allow scratch/XDG paths"), `applyConfig` in `src/index.ts` was changed from `function applyConfig(...)` to `export function applyConfig(...)` purely so tests could import it directly.
+
+  OpenCode's plugin loader (1.14.x line) probes named exports on the plugin module looking for `PluginModule`-shaped entries (`{ id?, server, tui? }`). When it encountered the plain `applyConfig` function as a named export, the probe crashed inside OpenCode's minified bundle — fatal at plugin-load time, which cascaded into provider init (`S.auth`) and TUI bootstrap failing entirely.
+
+  Bisect walked every published version (v0.1.2 works, v0.2.0 works, v0.3.0 onward crashes) and isolated the crash to the single `export` keyword on line 137 of `src/index.ts`.
+
+  ## Fix
+
+  Moved `applyConfig` into a dedicated module `src/config-hook.ts`. `src/index.ts` now imports it as a runtime internal and has exactly **one** export — the plugin factory `default`. Tests import `applyConfig` from `src/config-hook.ts`.
+
+  ## Regression guard
+
+  New test file `test/plugin-entry-single-default-export.test.ts` enforces three invariants:
+
+  1. `src/index.ts` has no `export function/const/let/var/class/enum/namespace/{...}` — only `export default`.
+  2. `src/index.ts` has exactly one `export default`.
+  3. The built `dist/index.js` exposes only `default` on its runtime surface (guards against bundler quirks that might re-surface internals).
+
+  Any future commit that adds a named export to `src/index.ts` will fail CI with a message pointing at this changelog entry.
+
+  ## Bonus
+
+  Also hardens the returned `Hooks` object to omit keys whose values are `undefined` (defensive against a separate class of OpenCode-loader edge case observed while bisecting). New test file `test/plugin-hooks-no-undefined.test.ts` locks that in too.
+
+  ## Upgrade path
+
+  Users on floating semver (`bun add @glrs-dev/harness-opencode`) auto-recover on next `bun update`. Users stuck on `@latest` in the OpenCode cache already benefit from the self-update mechanism added in v0.6.0 ([#65](https://github.com/iceglober/harness-opencode/issues/65)) — next OpenCode restart re-installs the fixed version.
+
+  For users who can't wait for the release: edit `~/.config/opencode/opencode.json` and remove the `plugin` array temporarily, then restore it after `bun update` completes. `oc` works without the harness; you just lose the custom agents/skills until the update lands.
+
+- [#67](https://github.com/iceglober/harness-opencode/pull/67) [`3483448`](https://github.com/iceglober/harness-opencode/commit/3483448281f3652d803067dff1bda2687bdace0e) Thanks [@iceglober](https://github.com/iceglober)! - **Fix: reviewers no longer prompt for permission on trivial read-only git commands (`git branch --show-current`, `git status`, etc.).**
+
+  Context: users kept hitting `Permission required` asks inside `qa-reviewer`, `qa-thorough`, and `autopilot-verifier` for commands that were explicitly supposed to be allowed. v0.6.0 (commit `c9a288d`) tried to fix this by simplifying the agent-level `permission.bash` from an object-form rule-map to the scalar `"allow"`, but the prompts kept coming.
+
+  Root cause: OpenCode's permission resolver merges agent-level `permission.bash` with the **global** `permission.bash` from `applyConfig`. When the agent level was scalar `"allow"` and the global was an object-form rule-map (`{"*": "allow", "git push --force*": "deny", ...}`), the global map was still being re-evaluated on each bash invocation and fell through to an ask for some command shapes — even commands as trivial as `git branch --show-current`. The agent-level scalar was not winning the resolution.
+
+  Fix: removed the global `permission.bash` default in `applyConfig` entirely. Subagents that declare `bash: "allow"` now get an unambiguous allow with nothing to fight against. Destructive-command safety is preserved at two surviving layers:
+
+  1. **Primary agents (`orchestrator`, `build`) keep their own object-form bash rule-maps** with explicit denies for `rm -rf`, `sudo`, `chmod`, `chown`, `git push --force`, `git push * main`, `git push * master`. These are the only agents that routinely run shell commands with mutation potential, so the safety net is exactly where it's needed.
+  2. **Read-only subagents (`plan-reviewer`, `code-searcher`, `gap-analyzer`, `architecture-advisor`, `lib-reader`) declare `bash: "deny"`** entirely — bash is off for them regardless.
+
+  Reviewers (`qa-reviewer`, `qa-thorough`, `autopilot-verifier`) are read-only by role; their system prompts forbid destructive operations and they never reach for them. The risk surface from dropping the global deny net for them is negligible; the productivity cost of the ask-prompts was severe.
+
+  Also updated: relevant test assertions (`applyConfig — permission.bash behavior` block), and the explanatory comments in `src/index.ts` + `src/agents/index.ts` that referenced the now-removed global layer so future maintainers don't try to re-add it without reading the history.
+
 ## 0.6.0
 
 ### Minor Changes
