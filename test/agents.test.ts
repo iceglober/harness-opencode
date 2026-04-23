@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createAgents } from "../src/agents/index.js";
-import { applyConfig } from "../src/index.js";
+import { applyConfig } from "../src/config-hook.js";
 
 describe("createAgents", () => {
   const agents = createAgents();
