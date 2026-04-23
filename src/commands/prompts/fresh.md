@@ -4,7 +4,24 @@ description: Re-key the current worktree to a new task. Runs the repo's .gloriou
 
 User input: $ARGUMENTS
 
-You are re-keying an existing, long-running git worktree to a new unit of work. The worktree itself is not created or destroyed — it's a persistent shell tab owned by the user. Your job is to parse the request, complete any interactive safety confirmations, dispatch to the repo's reset strategy (either a committed hook or the built-in default), print a compact summary, and then continue inline into the orchestrator on the new task — all **scoped to this worktree only**. Other worktrees and their running processes must be untouched.
+## STOP — read this first, before anything else
+
+**You do NOT ask the user to confirm discarding the working tree. Ever. Unless the user's input above literally contains the flag `--confirm`, you wipe silently.**
+
+Running `/fresh` IS the intent to discard. The user typed `/fresh` because they want a clean workspace. A confirmation prompt at this stage is not safety — it is friction that defeats the entire point of the command. If you are about to invoke the `question` tool to ask any variant of "proceed with discarding changes?" — **STOP.** Re-read this paragraph. The answer is already "yes," because the user already said it by running `/fresh`.
+
+The ONLY permissible uses of the `question` tool inside `/fresh`:
+
+1. The user's input contains the literal flag `--confirm` AND the working tree is dirty → ask the §3 discard confirmation.
+2. The user's input has no free-text ref AND does not contain `--yes` → ask "what's this tab re-keying to?"
+
+Those are the only two cases. **Not** "but there's an untracked file," **not** "but the file isn't gitignored," **not** "but `.opencode/package-lock.json` looks important." The user knows what's in their worktree; they typed `/fresh` anyway. Recovery is already baked in — unpushed commits stay reachable via `git reflog` and the old branch ref.
+
+Before every `question` tool invocation in this command, verify it matches case 1 or case 2 above. If it doesn't, do not call the tool. Just proceed.
+
+---
+
+You are re-keying an existing, long-running git worktree to a new unit of work. The worktree itself is not created or destroyed — it's a persistent shell tab owned by the user. Your job is to parse the request, dispatch to the repo's reset strategy (either a committed hook or the built-in default), print a compact summary, and then continue inline into the orchestrator on the new task — all **scoped to this worktree only**. Other worktrees and their running processes must be untouched.
 
 ## Mental model (read this first)
 
@@ -144,9 +161,11 @@ STALE_STASHES=$(git stash list | head -5)
 
 **Summary of what was discarded:** in the interactive default path (wipe without prompting), the final summary (§7) reports `Discarded: <N> files` with a short list (up to 10, truncated) so the user can see what went. This is the visible trace that replaces the pre-wipe prompt — you lose the prompt, you gain a visible post-hoc receipt.
 
-**Destructive-discard confirmation (only when `--confirm` is passed and the tree is dirty):**
+**Destructive-discard confirmation — DO NOT USE unless the user's input contains the literal flag `--confirm`:**
 
-Use the `question` tool with these exact contents:
+> If you're reading this section without `--confirm` in the user's input, **skip it entirely**. You wipe silently. The prompt below is ONLY for the `--confirm` opt-in. An untracked file, a non-gitignored file, a file that "looks important" — none of those change this. `/fresh` without `--confirm` = wipe without asking.
+
+Use the `question` tool with these exact contents (only reachable when `--confirm` was passed):
 
 - Question: `Worktree is dirty. /fresh will hard-discard ALL uncommitted changes in this worktree. Proceed?`
 - Header: `Discard uncommitted changes?`

@@ -24,6 +24,11 @@ import { createCommands } from "./commands/index.js";
 import { createMcpConfig } from "./mcp/index.js";
 import { createTools } from "./tools/index.js";
 import { getSkillsRoot } from "./skills/paths.js";
+import {
+  PACKAGE_NAME,
+  readOurPackageVersion,
+  refreshPluginCache,
+} from "./auto-update.js";
 
 // Sub-plugins (autopilot completion loop + OS notifications + cost tracking)
 import autopilotPlugin from "./plugins/autopilot.js";
@@ -33,8 +38,13 @@ import costTrackerPlugin from "./plugins/cost-tracker.js";
 // ---- Update notification ----
 
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const PACKAGE_NAME = "@glrs-dev/harness-opencode";
-const BUNDLED_VERSION = "0.1.2"; // updated by release pipeline
+
+/**
+ * The version we're running as. Read at module load from our own
+ * package.json so the release pipeline doesn't have to patch a constant.
+ * Drift-proof — the source of truth is one file.
+ */
+const BUNDLED_VERSION = readOurPackageVersion(import.meta.url);
 
 function getUpdateCheckStatePath(): string {
   const cacheHome =
@@ -82,11 +92,33 @@ async function checkForUpdate(client: any): Promise<void> {
     );
 
     if (latest && latest !== BUNDLED_VERSION) {
+      // Attempt to self-heal the OpenCode plugin cache so the next restart
+      // picks up the new version. Best-effort — any failure degrades
+      // gracefully to the old "inform the user, they restart" path.
+      const refresh = await refreshPluginCache(BUNDLED_VERSION, latest).catch(
+        (err) => ({
+          outcome: "error" as const,
+          message: (err as Error).message,
+          fromVersion: BUNDLED_VERSION,
+          toVersion: latest,
+        }),
+      );
+
+      const toastMessage =
+        refresh.outcome === "refreshed"
+          ? `You have ${BUNDLED_VERSION}. Next OpenCode restart will auto-update.`
+          : refresh.outcome === "disabled"
+            ? `You have ${BUNDLED_VERSION}. Auto-update disabled; restart to pick up the new version (cache may need refresh).`
+            : refresh.outcome === "non-exact-pin"
+              ? `You have ${BUNDLED_VERSION}. Cache uses a custom version spec — run: bun update ${PACKAGE_NAME}`
+              : // cache-missing / not-our-package / already-current / error
+                `You have ${BUNDLED_VERSION}. Restart OpenCode to refresh (${refresh.outcome}).`;
+
       try {
         await client.tui.showToast({
           body: {
             title: `${PACKAGE_NAME} ${latest} available`,
-            message: `You have ${BUNDLED_VERSION}. Run: bun update ${PACKAGE_NAME}`,
+            message: toastMessage,
             variant: "info",
             duration: 8000,
           },
