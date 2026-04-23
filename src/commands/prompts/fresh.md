@@ -22,12 +22,13 @@ What `/fresh` DOES do, in order:
 1. **Prereq checks** — verify cwd is inside a worktree (not the main checkout).
 2. **Parse the user's input** — extract flags and free text.
 3. **Derive the new branch name** — from Linear/GitHub reference or free-text slug, with collision retry.
-4. **Working-tree safety check** — confirm-then-discard in interactive mode; hard-stop in `--yes` mode if the tree has tracked or non-gitignored untracked changes.
+4. **Working-tree safety check** — wipe without prompting in the interactive default; opt into confirmation via `--confirm`; hard-stop in `--yes` mode if the tree has tracked or non-gitignored untracked changes.
 5. **Capture state** — `OLD_BRANCH`, unpushed commits, handoff-brief-preservation snapshot.
 6. **Dispatch to the reset strategy** — hook present+executable → hook; otherwise (or `--skip-hook`) → built-in flow.
 7. **Write `.agent/fresh-handoff.md`** — so future agent turns (and future sessions opened in this same dir) can pick up cleanly.
 8. **Reset autopilot state** — zero iteration counters so the autopilot plugin sees a clean slate.
 9. **Print a compact summary** — **Do NOT tell the user to `cd` — they're already there.**
+10. **Start the orchestrator on the new task immediately** — in the SAME turn, read the handoff brief and begin the orchestrator arc (Phase 0 → Phase 1 → …) on the user's new request. Do NOT stop after the summary and wait for the user to type "work on it." `/fresh` is "re-key and go," not "re-key and wait."
 
 ## Architectural principle: who owns what
 
@@ -51,8 +52,11 @@ Same parsing rules as a typical fresh-worktree command:
 - **Core flags** (consumed here):
   - `--from <branch>` — base branch override (default: repo's default branch, usually `main`)
   - `--skip-hook` — force the built-in flow even when `.glorious/hooks/fresh-reset` is present+executable. Escape hatch for when you want to bypass the hook (e.g., debugging a broken hook). When no hook is present, this flag is a silent no-op.
-  - `--no-discard` — refuse to proceed if the working tree is dirty, instead of offering to discard (sanity safety for paranoid users)
-  - `--yes` — **non-interactive mode**. Assume yes on any confirmation that would normally use the `question` tool. Autopilot and orchestrator pass this when invoking `/fresh` inside a loop. Changes behavior when the tree is dirty: see § Non-interactive mode below.
+  - `--no-discard` — refuse to proceed if the working tree is dirty, instead of discarding. Aborts cleanly with the dirty list. Sanity safety for paranoid users who want a hard gate.
+  - `--confirm` — **interactive safety gate**. Before discarding a dirty tree, prompt via the `question` tool with the "what would be lost" list. Without this flag, the default interactive behavior is **wipe without asking** — `/fresh` is the user saying "I want a fresh workspace, don't slow me down with prompts." Use `--confirm` when you're not sure whether your working tree has anything salvageable.
+  - `--yes` — **non-interactive mode**. Assume yes on any confirmation that would normally use the `question` tool. Autopilot and orchestrator pass this when invoking `/fresh` inside a loop. Crucially, `--yes` is STRICTER than interactive default: it aborts on tracked changes or non-gitignored untracked files to protect unattended loops from silent data loss. See § Non-interactive mode below.
+
+**Design note on the dirty-tree default:** interactive `/fresh` trusts that the human running it has already decided they want the workspace wiped — that's the whole point of running `/fresh`. We do NOT prompt by default. `--confirm` opts into the safety prompt for paranoid runs. `--yes` (autopilot) is stricter because a loop can't recover from mistaken destruction the way a human at the terminal can.
 - **Free text** — first contiguous non-flag substring, used to derive the branch name.
 - **Pass-through args** — forwarded to the reset hook verbatim.
 
@@ -63,17 +67,21 @@ If the input is empty or has no free text:
 
 ## 1a. Non-interactive mode (`--yes`)
 
-Under `--yes`, every `question`-tool use in this command is replaced by a deterministic rule:
+Under `--yes`, every `question`-tool use in this command is replaced by a deterministic rule. Importantly, `--yes` is **stricter** than the interactive default on dirty trees — it aborts on tracked changes rather than wiping them. The interactive human at a terminal has recourse (they can `cd` elsewhere, inspect the old branch, etc.); an autopilot loop does not, so the gate lives here.
 
-| Decision | Interactive default | `--yes` behavior |
-|---|---|---|
-| Dirty tree, only untracked/gitignored debris | Ask to discard | **Proceed** — `git clean -fdx` is safe for gitignored/untracked build artifacts |
-| Dirty tree with TRACKED changes (modified/staged/deleted) | Ask to discard | **Abort** with `ERROR: /fresh --yes refuses to discard tracked changes. Commit/stash and re-run, or run /fresh without --yes.` |
-| Dirty tree with untracked NON-gitignored files | Ask to discard | **Abort** with the file list. Non-gitignored untracked files are almost always intentional. |
-| Unpushed commits on current branch | Proceed silently | Proceed silently (same as interactive) |
-| Input empty | Ask for input | Abort |
+| Decision | Interactive default (no flag) | `--confirm` | `--yes` behavior |
+|---|---|---|---|
+| Dirty tree, only untracked/gitignored debris | **Wipe silently** | Ask to discard | **Proceed** — `git clean -fdx` is safe for gitignored/untracked build artifacts |
+| Dirty tree with TRACKED changes (modified/staged/deleted) | **Wipe silently** — human explicitly ran `/fresh` | Ask to discard | **Abort** with `ERROR: /fresh --yes refuses to discard tracked changes. Commit/stash and re-run, or run /fresh without --yes.` |
+| Dirty tree with untracked NON-gitignored files | **Wipe silently** — human explicitly ran `/fresh` | Ask to discard | **Abort** with the file list. Non-gitignored untracked files are almost always intentional. |
+| Unpushed commits on current branch | Proceed silently | Proceed silently | Proceed silently |
+| Input empty | Ask for input | Ask for input | Abort |
 
-The invariant: `--yes` must never destroy work that a reasonable human would want to keep. Gitignored build artifacts are the only discard that's clearly safe without consent. Everything else halts the autopilot sequence so a human can inspect. The autopilot loop treats a `/fresh --yes` abort as a hard stop, not a "try next issue."
+The invariants:
+
+- **Interactive default trusts the human.** The user typing `/fresh` has already decided they want a clean workspace. Prompting is friction, not safety — they can `git reflog` or `git checkout <old-branch>` if they realize they wiped something important, since unpushed commits stay reachable via the old branch ref.
+- **`--yes` must never destroy work that a reasonable human would want to keep** when running unattended. Gitignored build artifacts are the only discard that's clearly safe without consent. Everything else halts the autopilot sequence so a human can inspect. The autopilot loop treats a `/fresh --yes` abort as a hard stop, not a "try next issue."
+- **`--confirm` is the opt-in safety prompt** for humans who want the old ask-first behavior on a specific run.
 
 To detect the tracked-vs-untracked split from `git status --porcelain`:
 - Lines starting with ` M`, `M `, `MM`, `A `, `D `, ` D`, `R `, `C `, `U ` (or any non-`??` prefix) = tracked changes present
@@ -127,16 +135,18 @@ STALE_STASHES=$(git stash list | head -5)
 
 **Decision matrix:**
 
-| Condition | Interactive default | `--yes` mode |
-|---|---|---|
-| Clean tree, tracked upstream | Proceed silently | Proceed silently |
-| Dirty tree: only gitignored/untracked debris | Confirm discard (see below) | **Proceed** — the dispatch target is expected to clean it, or the built-in will |
-| Dirty tree: tracked changes (modified/staged/deleted) | Confirm discard (see below) | **Abort** with tracked-file list |
-| Dirty tree: untracked non-gitignored files | Confirm discard (see below) | **Abort** with file list |
-| Dirty tree and `--no-discard` passed (any mode) | Abort with the dirty list | Abort with the dirty list |
-| Unpushed commits exist | **Proceed without asking** — old branch ref preserves them; summary mentions `Previous branch <old> kept N unpushed commits — recover with git checkout <old>` | Same |
+| Condition | Interactive default | `--confirm` | `--yes` mode |
+|---|---|---|---|
+| Clean tree, tracked upstream | Proceed silently | Proceed silently | Proceed silently |
+| Dirty tree: only gitignored/untracked debris | **Proceed silently** — wipe it | Confirm discard (see below) | **Proceed** — the dispatch target is expected to clean it, or the built-in will |
+| Dirty tree: tracked changes (modified/staged/deleted) | **Proceed silently** — wipe it; show summary of what was discarded | Confirm discard (see below) | **Abort** with tracked-file list |
+| Dirty tree: untracked non-gitignored files | **Proceed silently** — wipe it; show summary of what was discarded | Confirm discard (see below) | **Abort** with file list |
+| Dirty tree and `--no-discard` passed (any mode) | Abort with the dirty list | Abort with the dirty list | Abort with the dirty list |
+| Unpushed commits exist | **Proceed without asking** — old branch ref preserves them; summary mentions `Previous branch <old> kept N unpushed commits — recover with git checkout <old>` | Same | Same |
 
-**Destructive-discard confirmation (when dirty tree, interactive mode):**
+**Summary of what was discarded:** in the interactive default path (wipe without prompting), the final summary (§7) reports `Discarded: <N> files` with a short list (up to 10, truncated) so the user can see what went. This is the visible trace that replaces the pre-wipe prompt — you lose the prompt, you gain a visible post-hoc receipt.
+
+**Destructive-discard confirmation (only when `--confirm` is passed and the tree is dirty):**
 
 Use the `question` tool with these exact contents:
 
@@ -355,30 +365,50 @@ Assemble a compact summary. This is what the human sees.
 Recover previous work: git checkout <OLD_BRANCH>
 ```
 
-**Do NOT print `cd <path>` or "start a new session" or any handoff command.** The user is already in the tab where the work happens. The session continues in place.
+**Do NOT print `cd <path>` or "start a new session" or any handoff command.** The user is already in the tab where the work happens. The session continues in place — and immediately continues into §8 (orchestrator kickoff) in the same turn.
+
+## 8. Kick off the orchestrator on the new task (in the SAME turn)
+
+This is the piece that makes `/fresh` feel like "re-key and go" instead of "re-key and wait." After printing the summary, DO NOT stop and wait for a follow-up message. Continue in the same turn:
+
+1. **Read `.agent/fresh-handoff.md`** — you just wrote it, but re-reading it here is the authoritative source of truth for the new task (and it's the same thing any future session opened in this dir would read, so using it keeps behavior uniform).
+2. **Treat the "Original request" section of the brief as the new orchestrator input** — same as if the user had just typed that request as a fresh prompt.
+3. **Enter the orchestrator arc from the top** — Phase 0 bootstrap probe, then Phase 1 intent classification, then Phase 1.5 framing (substantial requests only), etc. The Phase 0 probe is cheap and will surface the brand-new handoff brief you just wrote, which is the expected "active plan? — no, just a fresh handoff" signal.
+4. **Do not re-prompt for confirmation of the task itself.** The user's request is in the brief. In `--confirm` mode you've already gated on discard; in default mode you haven't, but that's fine — the orchestrator's own safety gates (e.g., the Phase 1.5 framing confirmation for low-confidence substantial requests) are the right place for task-level clarifiers, not a `/fresh` meta-prompt.
+
+**Why in the same turn, not a follow-up nudge:** the autopilot plugin has its own session-idle re-injection for cases where the agent didn't auto-continue, but relying on that for the human-driven `/fresh` case adds a whole extra round-trip and a visible pause. Auto-continuing inline is faster and matches the user's mental model — they ran `/fresh <task>` expecting work to start, not expecting a checkpoint.
+
+**Interaction with `--yes` (autopilot):** same behavior. `/fresh --yes <ref>` re-keys, writes the brief, and continues inline into the orchestrator arc on the new ref. This means the autopilot plugin's "session idle → nudge to read handoff brief" path is now a fallback (for when the in-turn continuation was interrupted or didn't happen), not the primary path. The primary path is: autopilot calls `/fresh --yes <ref>` → `/fresh` re-keys and kicks off the orchestrator → orchestrator runs plan → build → verify → STOP → autopilot pops the next ref.
+
+**Exception — abort paths:** if `/fresh` aborts in §0 (not in a worktree), §1 (empty input), §3 (`--yes` + dirty tracked), or §3 (`--no-discard` + dirty), DO NOT enter §8. The whole point of an abort is that no work should start. Print the abort message and stop.
+
+**Exception — reset-strategy failure with WARNING status:** if the reset hook exited non-zero, the brief has a prominent warning banner. Still enter §8, BUT the orchestrator's Phase 0 bootstrap probe should see that banner and surface it to the user before starting work, letting them intervene if the worktree state is suspect. Phase 0's existing "if any plan is active, acknowledge it" behavior already covers this shape.
 
 ## Failure-mode reference
 
-| Step | Failure | Interactive | `--yes` |
-|---|---|---|---|
-| 0 (env check) | Not inside a worktree | Abort with guidance to create one first | Same |
-| 0 (env check) | Inside main checkout, not a worktree | Abort — `/fresh` is for worktrees only | Same |
-| 1 (parsing) | Empty input | Ask via `question` tool | **Abort** with `ERROR: /fresh --yes requires a ref/description.` |
-| 2 (tracker lookup) | MCP/gh unavailable, issue not found | Fall back to free-text slug | Same |
-| 2 (name collision) | New branch name conflicts | Retry with `-YYMMDD`, then `-$EPOCHSECONDS` | Same |
-| 3 (dirty tree with tracked changes) | User intervention needed | Ask to discard | **Abort** with file list |
-| 3 (dirty tree with untracked non-gitignored files) | User intervention needed | Ask to discard | **Abort** with file list |
-| 3 (dirty tree, only gitignored debris) | Safe to clean | Ask to discard | **Proceed** silently |
-| 4 (dispatch) | Hook file present but non-executable | WARN, fall back to built-in (§5a) | Same |
-| 4 (dispatch) | `--skip-hook` with hook present | Log, fall back to built-in (§5a) | Same |
-| 5a (built-in fetch) | Network/auth failure | Fall back to local tip of base, warn, continue | Same |
-| 5a (built-in checkout) | Name collision despite §2 safeguards | Abort — shouldn't reach here | Same |
-| 5b (hook) | Hook exits non-zero | WARN, continue to §6; brief shows failure banner | Same |
-| 5b (hook) | Hook emits malformed JSON tail | Silent — enrichment is best-effort | Same |
-| 5b (hook) | Hook doesn't change branch (pure-cleanup) | `ACTUAL_BRANCH == OLD_BRANCH`; brief reflects that; autopilot still re-keys via mtime | Same |
-| 5b (hook) | Hook overrides `NEW_BRANCH` | `ACTUAL_BRANCH` from `git branch --show-current` goes into brief and summary | Same |
-| 6 (handoff brief write) | File-system error | Warn, continue — brief is nice-to-have | Same |
-| 6a (autopilot-state reset) | File or `jq` issue | Warn, continue — coordination is nice-to-have | Same |
+| Step | Failure / condition | Interactive default | `--confirm` | `--yes` |
+|---|---|---|---|---|
+| 0 (env check) | Not inside a worktree | Abort with guidance to create one first | Same | Same |
+| 0 (env check) | Inside main checkout, not a worktree | Abort — `/fresh` is for worktrees only | Same | Same |
+| 1 (parsing) | Empty input | Ask via `question` tool | Ask via `question` tool | **Abort** with `ERROR: /fresh --yes requires a ref/description.` |
+| 2 (tracker lookup) | MCP/gh unavailable, issue not found | Fall back to free-text slug | Same | Same |
+| 2 (name collision) | New branch name conflicts | Retry with `-YYMMDD`, then `-$EPOCHSECONDS` | Same | Same |
+| 3 (dirty tree with tracked changes) | Working tree has modified/staged/deleted files | **Wipe silently**, surface discarded-file summary in §7 | Ask to discard | **Abort** with file list |
+| 3 (dirty tree with untracked non-gitignored files) | New files not in `.gitignore` | **Wipe silently**, surface discarded-file summary in §7 | Ask to discard | **Abort** with file list |
+| 3 (dirty tree, only gitignored debris) | Safe to clean | **Wipe silently** | Ask to discard | **Proceed** silently |
+| 4 (dispatch) | Hook file present but non-executable | WARN, fall back to built-in (§5a) | Same | Same |
+| 4 (dispatch) | `--skip-hook` with hook present | Log, fall back to built-in (§5a) | Same | Same |
+| 5a (built-in fetch) | Network/auth failure | Fall back to local tip of base, warn, continue | Same | Same |
+| 5a (built-in checkout) | Name collision despite §2 safeguards | Abort — shouldn't reach here | Same | Same |
+| 5b (hook) | Hook exits non-zero | WARN, continue to §6; brief shows failure banner | Same | Same |
+| 5b (hook) | Hook emits malformed JSON tail | Silent — enrichment is best-effort | Same | Same |
+| 5b (hook) | Hook doesn't change branch (pure-cleanup) | `ACTUAL_BRANCH == OLD_BRANCH`; brief reflects that; autopilot still re-keys via mtime | Same | Same |
+| 5b (hook) | Hook overrides `NEW_BRANCH` | `ACTUAL_BRANCH` from `git branch --show-current` goes into brief and summary | Same | Same |
+| 6 (handoff brief write) | File-system error | Warn, continue — brief is nice-to-have | Same | Same |
+| 6a (autopilot-state reset) | File or `jq` issue | Warn, continue — coordination is nice-to-have | Same | Same |
+| 8 (orchestrator kickoff) | Reset produced a WARNING status | Continue to §8 — orchestrator's Phase 0 surfaces the warning and lets the user intervene | Same | Same |
+| 8 (orchestrator kickoff) | Brief write failed in §6 | Skip §8; print "Re-key complete but handoff brief was not written — re-run /fresh or begin manually." The brief is the source-of-truth for the new task, so we can't kick off without it. | Same | Same |
+| 8 (orchestrator kickoff) | `/fresh` aborted earlier (no worktree, empty input, --yes + dirty tracked, --no-discard + dirty) | Do NOT enter §8 — print abort message and stop | Same | Same |
 
 ## Integration with `/autopilot` (sequence-of-issues mode)
 
@@ -395,22 +425,24 @@ When the user runs `/autopilot` with a project / milestone / queue reference, th
 - `--yes` suppresses every `question`-tool prompt. Autopilot cannot respond to them.
 - If the working tree has tracked changes or untracked non-gitignored files, `/fresh --yes` aborts. Autopilot treats this as a **hard stop** for the sequence, not "try next issue" — dirty tracked work means something went wrong in the previous iteration that requires human attention. This safety gate is owned by `/fresh`, not the reset strategy, which is what makes `--yes` abort semantics deterministic across repos (a hook cannot override them).
 - Whichever reset strategy runs (hook or built-in), `/fresh` always writes `.agent/fresh-handoff.md` and resets `.agent/autopilot-state.json` iteration counters to 0 after the reset completes. If the reset strategy exits non-zero, the brief is still written, with a prominent failure banner so the next turn sees it.
-- The autopilot plugin picks up from here: on its next session-idle scan, it sees the recent handoff brief + zeroed counter and injects a "new task started, read the handoff brief" nudge.
+- **`/fresh --yes` then auto-continues inline into the orchestrator arc on the new ref (§8).** It does NOT stop and wait for the plugin to re-inject the agent. The plugin's session-idle "new task, read the handoff brief" nudge remains as a fallback for cases where the inline continuation was interrupted, but the primary path is in-turn continuation. This makes the autopilot loop faster (one round-trip per issue instead of two) and eliminates a class of "stuck session waiting for nudge" bugs.
 
 **Summary of the handoff contract:**
 
 ```
-autopilot queue    →    autopilot pops ref    →    /fresh <ref> --yes    →    autopilot plugin sees:
-                                                                                - .agent/fresh-handoff.md
-                                                                                  (fresher than last plan path)
-                                                                                - .agent/autopilot-state.json
-                                                                                  (iterations reset to 0)
-                                                                              plugin nudges agent:
-                                                                              "New task: read .agent/fresh-handoff.md"
-                                                                              agent runs orchestrator arc
-                                                                              plan → build → verify → STOP
-                                                                              plugin sees acceptance criteria all [x],
-                                                                              resets counter, autopilot pops next ref
+autopilot queue    →    autopilot pops ref    →    /fresh <ref> --yes    →    /fresh re-keys:
+                                                                                 - discards tree (via hook or built-in)
+                                                                                 - fetches base, checks out new branch
+                                                                                 - writes .agent/fresh-handoff.md
+                                                                                 - resets autopilot-state iterations
+                                                                                 - prints summary
+                                                                                 - CONTINUES INLINE into orchestrator (§8):
+                                                                                   reads brief, runs Phase 0 → 1 → 1.5 → …
+                                                                                   plan → build → verify → STOP
+                                                                               autopilot sees acceptance criteria all [x],
+                                                                               pops next ref, loops
+                                                                              (plugin session-idle nudge is fallback-only
+                                                                               for the interrupted-continuation case)
 ```
 
 ## Hook contract, for repo authors
@@ -432,4 +464,4 @@ Projects that want the built-in long-running-worktree flow ARE the default; they
 
 ## One-sentence philosophy
 
-`/fresh` is a re-key protocol with a pluggable reset strategy: the default strategy is the long-running-worktree flow (discard → fetch → `checkout -b`); repos can ship their own strategy at `.glorious/hooks/fresh-reset`. Either way, `/fresh` owns the invariants — safety gates, handoff brief, autopilot integration — so those remain consistent across every repo that uses the harness.
+`/fresh` is a re-key-and-go protocol with a pluggable reset strategy: it wipes the worktree without friction (the human running `/fresh` has already decided), fetches the fresh base, checks out a new branch, writes a handoff brief, and continues inline into the orchestrator on the new task — one command, one turn, one uninterrupted transition from old task to new. Repos can ship their own reset strategy at `.glorious/hooks/fresh-reset`; `/fresh` owns the invariants (safety gates, handoff brief, autopilot integration, orchestrator kickoff) so those remain consistent across every repo that uses the harness.
