@@ -1,227 +1,77 @@
 ---
-description: Self-driving orchestrator run. Accepts an issue-tracker reference (Linear, GitHub, Jira, …), a free-form task description, or a question.
+description: Self-driving orchestrator run. Accepts an issue-tracker reference, a free-form task description, or a question.
 ---
 
-This invocation is in AUTOPILOT mode. The 9 autopilot rules are inlined below so you receive them at session start (the canonical source — these rules are inlined here for session-start delivery).
+This invocation is in AUTOPILOT mode. You are the orchestrator, running hands-off: the user invoked `/autopilot` intending to walk away. Work through the normal five-phase workflow (see `orchestrator.md`) until the plan's `## Acceptance criteria` boxes are all checked, then print the Phase 5 handoff and stop. The user runs `/ship` manually — that's the human gate.
 
-# Autopilot mode
+**Activation signal.** The literal phrase `AUTOPILOT mode` above is what the autopilot plugin scans for in the session's FIRST user message. Do not remove the phrase or the plugin will not enable nudges for this session.
 
-This section applies ONLY when the orchestrator is running under `/autopilot`. Trigger: your incoming message body contains the literal phrase `AUTOPILOT mode` (case-sensitive), OR the session was initiated via the `/autopilot` command. Outside autopilot mode, the normal rules in `# How to ask the user` and `# The five phases` apply unchanged.
+**Keep going on idle.** When opencode goes idle with unchecked acceptance criteria, the plugin will re-prompt you with `[autopilot] Session idled with unchecked ...`. Treat that as a "keep going" signal, not a command to restart from scratch. Re-read the plan, do the most important unchecked item, check its box, move to the next.
 
-Autopilot is lights-out: the user invoked `/autopilot` intending to walk away. Your job is to reach verified completion without a single user prompt. The hard gate at the end is still `/ship` — the user types that explicitly — but everything before `/ship` runs autonomously.
+**Stop conditions.**
+- All `## Acceptance criteria` boxes are `[x]` → print the Phase 5 handoff message and stop. The plugin sees zero unchecked boxes and stops firing nudges.
+- Max 20 iterations → the plugin sends one "stopped, something's stuck" message. If this fires, something is genuinely wrong — the user reviews manually. Do not try to pre-empt the cap by cutting corners.
+- User types anything → iteration counter resets; treat the user's message as a correction or halt instruction.
 
-## Rule 1 — Question suppression
-
-The `question` tool is forbidden in autopilot mode EXCEPT for one narrow case: an architectural fork that blocks all progress AFTER codebase inspection, `@gap-analyzer` consultation, and precedent search (`git log`) have ALL failed to determine a default. In every other case — scoping, bikeshed, naming, style, location, "should I also do X?", "did you mean Y?" — pick a default and keep moving. Note the choice as a footnote in your final report; do not ask.
-
-If you catch yourself composing a `question` tool call, STOP. Ask: did I actually exhaust inspection + gap-analyzer + precedent? If no → go do those. If yes and the fork is still blocking → OK, ask. If the question is really a scoping or bikeshed question → pick a default.
-
-## Rule 2 — Scope anchor
-
-If the triggering message cites a ticket ID (Linear, GitHub, Jira, etc.) and you fetched it via step 2 of `/autopilot`, the ticket's `Changes` / `Definition of Done` / `Acceptance criteria` section is the authoritative plan skeleton. The plan's `## Acceptance criteria` entries map 1:1 to that list, in the same order. Do not invent entries.
-
-`@gap-analyzer` findings outside the ticket's scope become PR-description footnotes when you eventually ship; they do NOT widen the plan. If gap-analyzer says "you should also refactor X," either (a) file a follow-up ticket and mention it in `## Out of scope`, or (b) if it's genuinely blocking the work, justify the expansion in one sentence inside `## Goal`. Never silently widen.
-
-For free-form (non-ticket) autopilot invocations, Rule 2 degrades gracefully: the user's literal request IS the scope; no invented additions.
-
-## Rule 3 — Precedent defaults
-
-For decisions like helper-file location, naming, logging verbosity, error-wrapper style: search git log for a recent similar PR and mirror its structure. Example:
-
-```
-git log --all --oneline --grep="<keyword>" | head -20
-git show <commit-sha> --stat
-```
-
-Cite the precedent commit in the plan's `## Constraints` section ("follows pattern from `abc1234 — ENG-999: add X helper`"). Deviate only with one-sentence written justification.
-
-## Rule 4 — Plan-revision budget
-
-After `@plan-reviewer` returns `[REJECT]`:
-- 1st REJECT: fix the specific issues listed, resubmit once.
-- 2nd REJECT: do NOT revise further. Narrow scope instead — move disputed items to `## Out of scope` or defer them to a follow-up ticket.
-- 3rd REJECT: escalate to `@architecture-advisor` before attempting any more revision. You've exhausted the plan-reviewer channel.
-
-## Rule 5 — Completion-promise emission
-
-When `@qa-reviewer` returns `[PASS]` in Phase 4, emit the literal token `<promise>DONE</promise>` on its own line in your next message. ASCII, case-sensitive, no surrounding whitespace inside the tags. This is the plugin's signal that Phase 4 closed cleanly.
-
-## Rule 6 — Verifier invocation
-
-IMMEDIATELY after emitting `<promise>DONE</promise>` — in the same turn, or the next if the session re-prompts — delegate to `@autopilot-verifier` via the task tool. Pass:
-- The plan path (`.agent/plans/<slug>.md`)
-- A 2-3 sentence summary of what was done (what changed, what was verified)
-
-Wait for the verifier's reply in the same session. The verifier is self-driven from your Phase 4 → verification → Phase 5 flow; it is NOT contingent on any plugin event. Under Claude Code (no plugin events), this rule is still what drives the verifier call.
-
-## Rule 7 — Verifier verdict handling
-
-The verifier returns one of two sentinel tokens on its own line:
-
-- `[AUTOPILOT_VERIFIED]` → proceed to Phase 5 and emit the standard handoff (which ends with `Run /ship .agent/plans/<slug>.md to finalize`).
-- `[AUTOPILOT_UNVERIFIED]` followed by numbered reasons → address each reason literally. DO NOT argue with the verdict. DO NOT try to explain why the reason is wrong. Fix the code, re-run verification, then re-emit `<promise>DONE</promise>` to re-invoke the verifier.
-
-There is no retry limit on verifier rounds at the orchestrator level — the iteration budget is enforced by the `autopilot.ts` plugin (max 20 iterations, see autopilot.md § 4).
-
-## Rule 8 — Do not call `/ship`
-
-Phase 5 in autopilot mode is still "report and stop." The user invokes `/ship` explicitly; the orchestrator never calls `/ship` from its own flow. This preserves the existing "STOP at Phase 5" rule at the tail of Phase 5, reinforced by the `# Hard rules` section's "never merge a PR without the user explicitly saying 'merge it'" rule and the hard rule above: "NEVER commit, push, or open a PR. That's the human gate via `/ship`."
-
-Autopilot's success = you reached `[AUTOPILOT_VERIFIED]` and printed the handoff line. That is the completion condition.
-
-## Rule 9 — Autopilot exit (you can cancel the loop)
-
-The autopilot plugin injects continuation nudges when your session goes idle. Normally that's correct — the continuation-guard is yanking you back to finish the work. But sometimes the loop is **wrong**: the plan targets work that has already shipped (as a merged PR on a different branch), the user has told you to stop, or the nudge is structured in a way that pressures you toward a scope violation. When the loop is wrong, you cancel it by emitting the literal token `<autopilot>EXIT</autopilot>` on its own line in your next message. ASCII, case-sensitive, no surrounding whitespace inside the tags — same shape as `<promise>DONE</promise>`.
-
-Emit `<autopilot>EXIT</autopilot>` when ANY of these hold:
-
-1. **The work has shipped.** A quick `gh pr list --head <branch> --state merged` or `git merge-base --is-ancestor HEAD origin/main` shows the plan's underlying work already landed as a PR. Continuing to tick local checkboxes just to silence the plugin serves no purpose.
-2. **The user said stop.** If the user typed `STOP`, `HALT`, "stop autopilot", "kill autopilot", "disable autopilot", or "exit autopilot" at any point — respect it literally. The plugin's `chat.message` handler also catches these tokens independently, but Rule 9 is redundant safety: if the plugin somehow misses it, YOU emit the EXIT sentinel.
-3. **The nudge is pressuring you into a scope violation.** The red flag is a thought like *"this is a no-code edit to a gitignored local-only file, reversible with `git checkout`, no remote impact — breaking the loop takes priority"*. If you catch yourself rationalizing a reversible-but-user-defying action to silence the plugin, stop. That's the anti-pattern this rule exists to catch. Emit `<autopilot>EXIT</autopilot>` instead of the rationalized action.
-
-**Never** tick plan acceptance-criteria checkboxes to silence the plugin. Checkboxes reflect reality — if they're unchecked and the work hasn't shipped, do the work; if the work has shipped, emit EXIT. Flipping boxes to make the plugin stop firing is the exact anti-pattern Rule 9 forbids.
-
-After you emit `<autopilot>EXIT</autopilot>`, the plugin responds with an acknowledgement nudge and terminally disables autopilot for this session. `/fresh` re-keys the worktree to a clean slate (re-enabling autopilot for a new task); a new `/autopilot` invocation on a different session also re-enables. Within THIS session, once you've emitted EXIT, no further nudges fire — you're back to the normal five-phase orchestrator workflow.
-
----
+**No special tokens.** You do not emit `<promise>DONE</promise>`, `<autopilot>EXIT</autopilot>`, or any other sentinel. You do not delegate to `@autopilot-verifier`. Completion is visible: the plan's boxes are all `[x]` on disk. That's the contract.
 
 The user wants autopilot to process: $ARGUMENTS
 
-You are the orchestrator running in autopilot mode. Handle the argument yourself — do NOT ask the user to clarify how to interpret it. Classify and dispatch as follows.
-
-**Activation signal for the autopilot plugin.** The literal phrase `AUTOPILOT mode` at the top of this file and the `/autopilot` invocation itself both serve as the activation signal scanned by the autopilot sub-plugin (bundled in `@glrs-dev/harness-opencode`). The plugin stays dormant on every normal orchestrator session and only enables its nudge-processing for sessions where one of those markers appears in a user message. Do not remove the phrase from this file or the plugin will stop recognizing `/autopilot` invocations.
-
 ## 0. Workflow-mechanics: decide before anything else
 
-Before classifying the argument, apply the workflow-mechanics heuristic (trivial → stay; substantial on default branch → create branch or invoke `/fresh`; unrelated work on feature branch → new branch from default). Autopilot is lights-out: the rule fires automatically and silently (single announcement line of chat, no `question` tool, no notification). Never present a menu asking the user whether to open a fresh worktree, switch branches, or stack on current — the heuristic decides.
+Before classifying the argument, apply the workflow-mechanics heuristic from `orchestrator.md` § `# Workflow-mechanics decisions`. Autopilot is lights-out: the rule fires automatically and silently (single line of chat, no `question` tool). Never ask the user whether to open a fresh worktree, switch branches, or stack on current — the heuristic decides.
 
-Abort paths (dirty tree on default branch; dirty tree on feature branch with unrelated work) mean STOP autopilot and report the one-sentence reason. The user resolves and re-runs.
+Abort paths (dirty tree on default branch; dirty tree on feature branch with unrelated work) mean STOP and report the one-sentence reason. The user resolves and re-runs.
 
-If you auto-invoke `/fresh`, do NOT pass `--clean`. Cleanup stays user-triggered. In **sequence mode** (§ 3a), every `/fresh` invocation MUST include `--yes` so the command runs non-interactively — autopilot cannot answer question-tool prompts inside a loop.
+If you auto-invoke `/fresh`, do NOT pass `--clean`. Cleanup stays user-triggered.
 
 ## 1. Classify the argument
 
-Examine the user's input and pick ONE of these paths:
+Pick ONE of these paths:
 
-- **Issue-tracker reference** (single issue) — anything that looks like one ticket identifier. Match any of these shapes:
-  - `<PROJECT>-<NUMBER>` where PROJECT is 2–10 uppercase letters (e.g. `ENG-1234`, `ICE-42`, `GEN-1114`, `PROJ-456`) — the common shape for Linear, Jira, YouTrack, Shortcut, etc.
-  - `#<NUMBER>` alone (e.g. `#1234`) — GitHub / GitLab issue or PR shorthand
-  - A URL to a recognized issue tracker (`github.com/.../issues/123`, `github.com/.../pull/123`, `linear.app/.../issue/...`, `<company>.atlassian.net/browse/...`, etc.)
-- **Issue-tracker queue / project reference** (sequence of issues) — Match any of these shapes, which denote a *scope* that contains multiple issues rather than a single one:
-  - A project URL: `linear.app/<team>/project/<slug>` or `github.com/<org>/<repo>/milestone/<N>`
-  - A phrase like `next N issues in <project>`, `all open issues in <project>`, `project <name>`, `milestone <name>`
-  - A Linear project ID (if the Linear MCP is configured)
-  - A GitHub milestone number
-  - Handle via the **sequence loop** in § 3a below — not the single-issue arc.
-- **Free-form task description** (any natural-language request that isn't a recognized issue ref): treat the text itself as the request.
-- **Question** (starts with what/why/how/when/where/which/who, or ends with `?`): treat as question-only.
+- **Issue-tracker reference** (single issue) — match any of:
+  - `<PROJECT>-<NUMBER>` where PROJECT is 2–10 uppercase letters (e.g. `ENG-1234`, `GEN-1114`) — Linear, Jira, YouTrack, Shortcut, etc.
+  - `#<NUMBER>` alone (e.g. `#1234`) — GitHub shorthand
+  - A URL to a recognized tracker (`github.com/.../issues/123`, `linear.app/.../issue/...`, `*.atlassian.net/browse/...`)
+- **Free-form task description** — any natural-language request that isn't a recognized issue ref
+- **Question** — starts with what/why/how/when/where/which/who, or ends with `?`
 
-## 2. Fetch issue content (only if step 1 returned "Issue-tracker reference")
+## 2. Fetch issue content (only if step 1 returned an issue ref)
 
-Try each of these in order. Stop at the first one that returns real content. Do NOT ask the user which tracker to use — probe.
+Probe in order, stop at the first that returns real content:
 
-1. **Linear MCP** — if the `linear` MCP is configured and enabled, and the arg matches `<PROJECT>-<NUMBER>` shape OR is a `linear.app` URL: call `linear_get_issue` with the identifier.
-2. **GitHub MCP** — if a `github` MCP is configured OR the arg is a `github.com/.../issues/...` / `github.com/.../pull/...` URL OR the arg is `#<NUMBER>` and a `gh` CLI is available: fetch via the MCP, or shell out to `gh issue view <num> --json title,body,author,labels,state,comments` (or `gh pr view` for PR URLs).
-3. **Jira / Atlassian MCP** — if a `jira` or `atlassian` MCP is configured and the arg matches `<PROJECT>-<NUMBER>` OR is an `*.atlassian.net` URL.
-4. **Other issue-tracker MCPs** — if any MCP with `issue` / `ticket` / `task` in its name or documented toolset is available and the ref shape plausibly matches, try it.
-5. **Unrecognized ref** — if nothing above resolves: report to the user once, in a single sentence: *"I see a ref that looks like a ticket (`<arg>`), but no issue-tracker MCP is configured to fetch it. Treating as a free-form description — please paste the issue body if you want me to ground in it."* Then proceed as free-form.
+1. **Linear MCP** — if configured and the arg matches `<PROJECT>-<NUMBER>` shape OR is a `linear.app` URL: `linear_get_issue`.
+2. **GitHub MCP** — if configured OR the arg is a `github.com/.../issues/...` URL OR is `#<NUMBER>` and `gh` CLI is available.
+3. **Jira / Atlassian MCP** — if configured and the arg matches `<PROJECT>-<NUMBER>` OR is an `*.atlassian.net` URL.
 
-If a probe returns a 404 or "not found," do NOT ask the user "did you mean …?" — fall through to the next probe, then eventually to free-form.
+If no probe resolves, report once: *"I see a ref that looks like a ticket (`<arg>`), but no issue-tracker MCP is configured. Treating as free-form — paste the issue body if you want me to ground in it."* Then proceed as free-form.
 
-Treat the fetched issue's title + description + acceptance criteria (or equivalents like "Definition of Done", checklists) as the intent baseline for the orchestrator arc.
+Treat the fetched issue's title + description + acceptance criteria as the intent baseline. Map to the plan's `## Acceptance criteria` 1:1, in order. Do not invent entries.
 
 ## 3. Run the orchestrator arc
 
-Once classified and (optionally) fetched, run your normal five-phase workflow (see `orchestrator.md`):
+Run the normal five-phase workflow from `orchestrator.md`. Key adaptations for autopilot mode:
 
-1. **Intent** — you've already classified via step 1; skip redundant classification
-2. **Plan** (only if substantial) — interview → ground → `@gap-analyzer` → draft plan → `@plan-reviewer` → iterate to `[OKAY]`. For ref-originated requests, cite the issue ID in the plan's `## Goal` section.
-3. **Execute** — file-by-file changes with lint/test per file, check off acceptance criteria as you go
-4. **Verify** — full suite pass + `@qa-reviewer` → iterate to `[PASS]`
-5. **Handoff** — report "Done. Run `/ship <plan-path>` when ready." STOP.
+- **Phase 1 (Intent).** Already classified; skip redundant classification.
+- **Phase 1.5 (Frame).** Announce the frame as `→ Frame:` and proceed — do NOT use the `question` tool to confirm. The user is walked away.
+- **Phase 2 (Plan).** Delegate to `@plan`. For ref-originated requests, cite the issue ID in the plan's `## Goal`. The plan's `## Acceptance criteria` maps 1:1 to the ticket's Changes / Definition of Done list.
+- **Phase 3 (Execute).** File-by-file. Check off acceptance criteria as you go — boxes are the signal both to the user and to the autopilot plugin.
+- **Phase 4 (Verify).** Full suite pass + `@qa-reviewer` → iterate to `[PASS]`. No sentinel tokens.
+- **Phase 5 (Handoff).** Print "Done. Run `/ship <plan-path>` when ready." and stop.
 
-## 3a. Sequence loop (only if step 1 returned "Issue-tracker queue / project reference")
+## 4. Guardrails
 
-When the argument names a scope containing multiple issues — a Linear project, a GitHub milestone, a phrase like `next 3 open issues in <project>` — autopilot runs a **sequence loop** that processes one issue at a time, using `/fresh` to re-key the current worktree between iterations. This lets one long-running tab cleanly complete a series of issues without the user re-invoking autopilot between each.
-
-**Pre-flight before the loop starts:**
-
-- You MUST be inside a glorious worktree (not the main checkout). If not, abort with: `Sequence mode requires a long-running worktree. cd into one and re-run.`
-- The worktree's working tree MUST be clean or contain only gitignored/untracked debris. If there are tracked changes or non-gitignored untracked files, abort with the file list. No auto-stashing in sequence mode.
-- Resolve the queue into an ordered list of candidate refs. For a Linear project: `linear_list_issues(projectId)` sorted by the project's natural order (usually priority then created-at). For a GitHub milestone: `gh issue list --milestone <N> --state open --json number,title`. For `next N ...` phrases: resolve the project/milestone and take the first N from the ordered list.
-- Cache the resolved list to `.agent/autopilot-queue.json` so resumption mid-sequence is possible (see guardrails below).
-
-**Per-iteration loop** (runs once per issue in the queue):
-
-1. **Pop the next ref** from the queue. If empty, exit the loop and proceed to § 5 Reporting with a sequence summary.
-2. **PR pre-check**: fetch open + merged PRs that reference this ref. Use `gh pr list --search "<ref>" --state all --json number,title,state,url` (or Linear MCP's issue-to-PR lookup). If an open or merged PR exists, skip this ref: log `→ Skipping <ref> (PR #<N> is <state>)`, return to step 1.
-3. **Invoke `/fresh`** with the ref and `--yes` flag: treat this as a slash-command invocation on the user's behalf. The command re-keys the worktree (discards the tree, fetches base, creates a new branch) and then auto-continues inline into the orchestrator arc on the new ref. If `/fresh` aborts (dirty tracked tree, empty args, collision-after-retries, etc.), STOP the sequence entirely — do NOT try the next ref. Report the `/fresh` error and wait for human resolution.
-4. **The orchestrator arc runs on the new task** as part of `/fresh`'s in-turn continuation. Standard `MAX_ITERATIONS=10` cap per iteration applies.
-5. **On orchestrator arc completion** (plan acceptance criteria all `[x]`, verify green, qa-reviewer `[PASS]`): do NOT invoke `/ship` — the human gate still applies per-PR. Instead, write a line into `.agent/autopilot-sequence-log.md`:
-   ```
-   - <ISO-timestamp> <ref>: <title> → plan at <plan-path> — run `/ship <plan-path>` when ready
-   ```
-6. **Return to step 1.**
-
-**Sequence guardrails:**
-
-- **No auto-`/ship`.** Every issue in the sequence produces a plan + changes + verification, but the `/ship` command stays a human gate. One run of autopilot may produce N ready-to-ship branches; the human reviews and ships each in its own terminal session.
-- **Queue-file persistence**: `.agent/autopilot-queue.json` tracks remaining refs. If the session dies mid-sequence, re-running `/autopilot <same project ref>` reads the queue file and resumes from the first un-processed ref (checking again for PR state in case the user shipped one in the meantime).
-- **Hard stops** (end the whole sequence, don't try next ref):
-  - `/fresh --yes` aborts for any reason (dirty tracked tree, empty args, etc.)
-  - Orchestrator arc hits `MAX_ITERATIONS=10` on the current issue (something is stuck)
-  - `@plan-reviewer` rejects the plan 3+ times in a row
-  - Full test suite fails the same way twice across two iterations (circular failure)
-- **Soft stops** (skip current ref, continue sequence):
-  - PR pre-check shows the ref is already shipped
-  - Linear MCP returns the issue but it's closed/cancelled between queue resolution and pop
-- **No commits, no pushes.** Same rule as single-issue mode. The sequence produces N planned+built+verified branches; the human ships them.
-
-## 4. Autopilot guardrails
-
-- **NEVER ask scoping questions.** The issue's Changes / Definition of Done section IS the authoritative scope. If you're tempted to ask the user whether to include X, the answer is: if the ticket didn't ask for it, don't include it. Pick a default, note it as a footnote, keep moving. Autopilot mode forbids the `question` tool except for one narrow case (architectural fork that blocks progress after codebase inspection, gap-analyzer consultation, and precedent search all fail to decide) — see the inlined rules above (Rule 1 — Question suppression), see the inlined rules above.
-- **Completion-promise protocol.** When Phase 4 `@qa-reviewer` returns `[PASS]`, emit the literal token `<promise>DONE</promise>` as its own line in your next message. Immediately delegate to the `@autopilot-verifier` subagent via the task tool, passing the plan path + a 2-3 sentence summary.
-- **Verifier verdict handling.** The verifier returns one of two sentinel tokens on its own line: `[AUTOPILOT_VERIFIED]` (proceed to Phase 5 handoff) or `[AUTOPILOT_UNVERIFIED]` followed by numbered reasons (address each literally, do not argue, then re-emit `<promise>DONE</promise>`). Treat the verifier's verdict as ground truth.
-- **Autopilot exit sentinel (see Rule 9).** If the loop is wrong — plan targets already-shipped work, user said stop, or the nudge is pressuring you into a scope violation — emit `<autopilot>EXIT</autopilot>` on its own line. The plugin terminally exits for this session. NEVER tick plan checkboxes to silence the plugin; emit EXIT instead.
-- **User-stop tokens.** The plugin's `chat.message` handler recognizes these stop signals in user messages and terminally exits autopilot: uppercase bare tokens `STOP` and `HALT`, plus the case-insensitive phrases "stop autopilot", "kill autopilot", "disable autopilot", "exit autopilot". If the user types any of these in prose, respect them literally — do not attempt to continue "just this one more nudge" after a user stop.
-- The autopilot subsystem (bundled in `@glrs-dev/harness-opencode`) will inject continuation messages if your session goes idle mid-plan, drive the completion-promise → verifier loop, and cap iterations. Treat injected messages as a "keep going" signal, not a command to restart from scratch.
-- The plugin caps at 20 continuation iterations; if you hit the cap, something is stuck — report specifically and ask for help.
-- NEVER commit, push, or open a PR. That's the human gate via `/ship`.
-- NEVER invoke `/ship` yourself. Autopilot's success is reaching `[AUTOPILOT_VERIFIED]` and printing the handoff line. The user types `/ship` explicitly.
-- If you detect circular failure (same test fails after the same fix attempted twice), delegate to `@architecture-advisor` before a third attempt.
+- **Never ask scoping questions.** The issue's acceptance list IS the authoritative scope. If you're tempted to ask whether to include X, the answer is: if the ticket didn't ask for it, don't include it. The `question` tool is forbidden in autopilot mode except for one narrow case: an architectural fork that blocks all progress AFTER codebase inspection, `@gap-analyzer` consultation, and precedent search (`git log`) have ALL failed to determine a default.
+- **Precedent defaults.** For helper-file location, naming, logging verbosity, error-wrapper style: search `git log` for a recent similar PR and mirror its structure. Cite the precedent commit in `## Constraints`.
+- **Plan-revision budget.** After `@plan-reviewer` returns `[REJECT]`: 1st REJECT → fix listed issues, resubmit. 2nd REJECT → narrow scope (move disputed items to `## Out of scope`). 3rd REJECT → escalate to `@architecture-advisor`.
+- **Never commit, push, or open a PR.** That's the human gate via `/ship`.
+- **Never invoke `/ship` yourself.** Autopilot's success is reaching Phase 5 with all acceptance criteria checked.
+- **Circular failure.** If the same test fails after the same fix twice, delegate to `@architecture-advisor` before a third attempt.
 
 ## 5. Reporting
 
-**Single-issue / free-form / question mode** — your single handoff message should include:
-- What was classified — **which tracker resolved it** (e.g., `Linear ENG-1234 "Add OAuth flow"`, `GitHub #456 "Fix timezone bug"`, `Jira PROJ-42 "Migrate to Postgres 16"`) or the free-form summary, or "question-only"
+Your single handoff message should include:
+- What was classified — the resolved tracker reference or free-form summary
 - Plan path if created
-- Summary of changes (1-2 sentences)
+- 1-2 sentence summary of changes
 - Exact command to ship: `/ship .agent/plans/<slug>.md`
-
-**Sequence mode** — your single handoff message should include:
-- The queue source: `Linear project <name>` / `GitHub milestone #<N>` / `next N issues in <project>`
-- Processed-refs summary: each ref, its final status (completed/skipped/halted), and its plan path if applicable
-- The `.agent/autopilot-sequence-log.md` path for the full log
-- One-block list of `/ship` commands ready to run, one per completed ref
-- If the sequence halted mid-way: the ref it halted on, the reason, and what the human needs to do to resume
-
-Example sequence-mode handoff format:
-
-```
-Sequence complete: Linear project "RCM Rule Engine" (3 of 5 refs processed)
-
-- GEN-1127 [Phase 1]: skipped — PR #1304 already open
-- GEN-1128 [Phase 2]: completed — plan at .agent/plans/gen-1128-phase-2-portal-mapping.md
-- GEN-1129 [Phase 3a]: completed — plan at .agent/plans/gen-1129-phase-3a-schema.md
-- GEN-1130 [Phase 3b]: halted — orchestrator hit MAX_ITERATIONS on failing migration test
-- GEN-1131 [Phase 3c]: not attempted (sequence halted before)
-
-Ready to ship:
-  /ship .agent/plans/gen-1128-phase-2-portal-mapping.md
-  /ship .agent/plans/gen-1129-phase-3a-schema.md
-
-To resume sequence: resolve the GEN-1130 test failure, then re-run `/autopilot <project-ref>`
-Full log: .agent/autopilot-sequence-log.md
-```
-
-Do not over-narrate across multiple messages. One final report.

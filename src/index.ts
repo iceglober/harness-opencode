@@ -33,7 +33,7 @@ import {
   refreshPluginCache,
 } from "./auto-update.js";
 
-// Sub-plugins (autopilot completion loop + OS notifications + cost tracking)
+// Sub-plugins (autopilot idle-nudge loop + OS notifications + cost tracking)
 import autopilotPlugin from "./plugins/autopilot.js";
 import notifyPlugin from "./plugins/notify.js";
 import costTrackerPlugin from "./plugins/cost-tracker.js";
