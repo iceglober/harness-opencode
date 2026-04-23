@@ -1,6 +1,6 @@
 {
   "name": "@glrs-dev/harness-opencode",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Opinionated OpenCode agent harness — orchestrator, plan, build, QA, skills, MCP wiring, hashline editing.",
   "type": "module",
   "main": "./dist/index.js",
