@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { applyConfig } from "../src/index.js";
+import { applyConfig } from "../src/config-hook.js";
 
 describe("applyConfig — external_directory defaults", () => {
   it("applyConfig is importable from src/index.ts", () => {

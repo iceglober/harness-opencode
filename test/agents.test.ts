@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createAgents } from "../src/agents/index.js";
-import { applyConfig } from "../src/index.js";
+import { applyConfig } from "../src/config-hook.js";
 
 describe("createAgents", () => {
   const agents = createAgents();
@@ -138,11 +138,15 @@ describe("subagent permissions", () => {
   });
 
   it("qa-reviewer bash is plain \"allow\" string", () => {
-    // Regression target for the pipelined-command permission-ask bug:
-    // the agent-level bash permission must be the plain string "allow",
-    // not an object rule-map. Destructive-command safety is enforced at
-    // the global permission.bash layer (see test "applyConfig global bash
-    // block denies destructive commands" below).
+    // Regression target for the permission-ask bug: the agent-level bash
+    // permission must be the plain string "allow", not an object rule-map.
+    // A global bash rule-map was also observed to cause ask-prompts to
+    // leak through even when the agent scalar was "allow" — so
+    // applyConfig intentionally ships NO global permission.bash default.
+    // Destructive-command safety for reviewers relies on their read-only
+    // role (system prompt forbids destructive ops) and they never reach
+    // for `rm -rf`, `sudo`, etc. Primary agents (orchestrator, build)
+    // carry their own agent-level object-form deny rules.
     const bash = (agents["qa-reviewer"] as any).permission.bash;
     expect(bash).toBe("allow");
   });
@@ -319,33 +323,32 @@ describe("prompt content assertions", () => {
   });
 });
 
-describe("applyConfig — global bash safety net", () => {
-  // Agent-level read-only reviewers (qa-reviewer, qa-thorough) now
-  // delegate destructive-command denial entirely to this global layer.
-  // Lock in the deny rules so the safety net can't be accidentally
-  // removed alongside future agent-level permission cleanup.
+describe("applyConfig — permission.bash behavior", () => {
+  // Regression: we intentionally do NOT ship a global permission.bash
+  // default. An earlier object-form rule-map at this layer caused
+  // OpenCode's permission resolver to emit ask-prompts for trivial
+  // read-only commands (e.g. `git branch --show-current`) under
+  // subagents that declared `bash: "allow"` as a scalar — the global
+  // pattern map was re-evaluated on top of the agent-level allow and
+  // fell through to "ask" for some command shapes.
+  //
+  // Safety for destructive commands is preserved via:
+  //   1. Per-agent object-form bash maps on primary agents that run
+  //      destructive ops (orchestrator, build) — they explicitly deny
+  //      `rm -rf /`, `rm -rf ~`, `sudo`, `chmod`, `chown`,
+  //      `git push --force`, `git push * main`, `git push * master`.
+  //      Tests for these live in "orchestrator bash deny rules" etc.
+  //   2. Read-only subagents declaring `bash: "deny"` entirely
+  //      (plan-reviewer, code-searcher, gap-analyzer, …).
+  //   3. Reviewer system prompts that forbid destructive operations
+  //      by role (qa-reviewer, qa-thorough).
 
-  it("applyConfig global bash block denies destructive commands", () => {
+  it("applyConfig does NOT set a global permission.bash default", () => {
     const config: any = {};
     applyConfig(config);
-    const bash = config.permission?.bash;
-    expect(typeof bash).toBe("object");
-    expect(bash).not.toBeNull();
-    // Catch-all allow must be present.
-    expect(bash["*"]).toBe("allow");
-    // Core destructive-command denies must all be present.
-    expect(bash["git push --force*"]).toBe("deny");
-    expect(bash["git push -f *"]).toBe("deny");
-    expect(bash["git push * --force*"]).toBe("deny");
-    expect(bash["git push * -f"]).toBe("deny");
-    expect(bash["rm -rf /*"]).toBe("deny");
-    expect(bash["rm -rf ~*"]).toBe("deny");
-    expect(bash["chmod *"]).toBe("deny");
-    expect(bash["chown *"]).toBe("deny");
-    expect(bash["sudo *"]).toBe("deny");
-    // --force-with-lease must remain allowed (safe force-push).
-    expect(bash["git push --force-with-lease*"]).toBe("allow");
-    expect(bash["git push * --force-with-lease*"]).toBe("allow");
+    // No global bash rule-map should be injected — the resolution
+    // ambiguity it created was the root cause of reviewer ask-prompts.
+    expect(config.permission?.bash).toBeUndefined();
   });
 
   it("applyConfig preserves user-supplied permission.bash without overwriting", () => {
@@ -356,5 +359,38 @@ describe("applyConfig — global bash safety net", () => {
     applyConfig(config);
     expect(config.permission.bash).toBe(userBash);
     expect(config.permission.bash["*"]).toBe("ask");
+  });
+
+  it("orchestrator agent keeps object-form destructive denies (primary-agent safety net)", () => {
+    // The safety net moved from global → orchestrator's own agent config.
+    // Lock in the critical denies here so they can't be removed without
+    // touching a test that explicitly names them.
+    const agents = createAgents();
+    const bash = (agents["orchestrator"] as any).permission.bash;
+    expect(typeof bash).toBe("object");
+    expect(bash["*"]).toBe("allow");
+    expect(bash["git push --force*"]).toBe("deny");
+    expect(bash["git push -f *"]).toBe("deny");
+    expect(bash["rm -rf /*"]).toBe("deny");
+    expect(bash["rm -rf ~*"]).toBe("deny");
+    expect(bash["chmod *"]).toBe("deny");
+    expect(bash["chown *"]).toBe("deny");
+    expect(bash["sudo *"]).toBe("deny");
+    // --force-with-lease remains allowed (safe force-push).
+    expect(bash["git push --force-with-lease*"]).toBe("allow");
+  });
+
+  it("build agent keeps object-form destructive denies (primary-agent safety net)", () => {
+    const agents = createAgents();
+    const bash = (agents["build"] as any).permission.bash;
+    expect(typeof bash).toBe("object");
+    expect(bash["*"]).toBe("allow");
+    expect(bash["git push --force*"]).toBe("deny");
+    expect(bash["rm -rf /*"]).toBe("deny");
+    expect(bash["rm -rf ~*"]).toBe("deny");
+    expect(bash["chmod *"]).toBe("deny");
+    expect(bash["chown *"]).toBe("deny");
+    expect(bash["sudo *"]).toBe("deny");
+    expect(bash["git push --force-with-lease*"]).toBe("allow");
   });
 });

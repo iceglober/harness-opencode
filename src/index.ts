@@ -14,16 +14,19 @@
  * so user's opencode.json overrides take effect.
  */
 
-import type { Plugin, Config, Hooks } from "@opencode-ai/plugin";
+import type { Plugin, Hooks } from "@opencode-ai/plugin";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import { createAgents } from "./agents/index.js";
-import { createCommands } from "./commands/index.js";
-import { createMcpConfig } from "./mcp/index.js";
+// CRITICAL: do NOT add named exports to this file. OpenCode's plugin loader
+// was observed to crash at startup (`TypeError: undefined is not an object
+// (evaluating 'V[G]')` inside its minified bundle) whenever this module
+// exposed anything besides `export default`. Keep config-hook logic in
+// ./config-hook.ts and tool-factory logic in ./tools/, and import them
+// here as internals. Regression: test/plugin-entry-single-default-export.test.ts.
+import { applyConfig } from "./config-hook.js";
 import { createTools } from "./tools/index.js";
-import { getSkillsRoot } from "./skills/paths.js";
 import {
   PACKAGE_NAME,
   readOurPackageVersion,
@@ -132,82 +135,6 @@ async function checkForUpdate(client: any): Promise<void> {
   }
 }
 
-// ---- Config hook ----
-
-export function applyConfig(config: Config): void {
-  // Agents: user-wins (user's opencode.json overrides our defaults)
-  const ourAgents = createAgents();
-  (config as any).agent = { ...ourAgents, ...((config as any).agent ?? {}) };
-
-  // Commands: user-wins
-  const ourCommands = createCommands();
-  (config as any).command = {
-    ...ourCommands,
-    ...((config as any).command ?? {}),
-  };
-
-  // MCPs: user-wins (merge non-destructively)
-  const ourMcp = createMcpConfig();
-  (config as any).mcp = { ...ourMcp, ...((config as any).mcp ?? {}) };
-
-  // Skills: push our bundled path first (plugin-wins on name collision)
-  const skillsRoot = getSkillsRoot();
-  const existingSkills = (config as any).skills ?? {};
-  const existingPaths: string[] = Array.isArray(existingSkills.paths)
-    ? existingSkills.paths
-    : [];
-  const existingUrls: string[] = Array.isArray(existingSkills.urls)
-    ? existingSkills.urls
-    : [];
-  (config as any).skills = {
-    ...existingSkills,
-    paths: [skillsRoot, ...existingPaths],
-    urls: existingUrls,
-  };
-
-  // Default agent
-  if (!(config as any).default_agent) {
-    (config as any).default_agent = "orchestrator";
-  }
-
-  // Permission: global defaults (non-destructive merge, user-wins)
-  const existingPermission = (config as any).permission ?? {};
-  const existingExtDir = existingPermission.external_directory ?? {};
-  const existingBash = existingPermission.bash;
-  (config as any).permission = {
-    // Our defaults first — user's existing values spread last to win
-    bash: existingBash ?? {
-      // Allow everything non-destructive; deny/ask only for dangerous ops.
-      // Last matching rule wins, so put "*" first.
-      "*": "allow",
-      "git push --force*": "deny",
-      "git push --force-with-lease*": "allow",   // safe force — re-allow after --force* deny
-      "git push -f *": "deny",
-      "git push * --force*": "deny",
-      "git push * --force-with-lease*": "allow",
-      "git push * -f": "deny",
-      "git clean *": "allow",
-      "git reset --hard*": "allow",
-      "rm -rf /*": "deny",
-      "rm -rf ~*": "deny",
-      "chmod *": "deny",
-      "chown *": "deny",
-      "sudo *": "deny",
-    },
-    ...existingPermission,
-    external_directory: {
-      "~/.glorious/worktrees/**": "allow",
-      "/tmp/**": "allow",
-      "/private/tmp/**": "allow",          // macOS: /tmp symlinks to /private/tmp
-      "/var/folders/**/T/**": "allow",     // macOS $TMPDIR expansion
-      "~/.config/opencode/**": "allow",    // OpenCode's own config dir — agents read it routinely
-      "~/.cache/**": "allow",              // XDG cache dir — tooling (npm, pip, etc.) writes here
-      "~/.local/share/**": "allow",        // XDG data dir — Linear MCP cache, etc.
-      ...existingExtDir,
-    },
-  };
-}
-
 // ---- Plugin entry ----
 
 const plugin: Plugin = async (input) => {
@@ -219,7 +146,16 @@ const plugin: Plugin = async (input) => {
   const notifyHooks = await notifyPlugin(input);
   const costTrackerHooks = await costTrackerPlugin(input);
 
-  // Merge all hooks
+  // Merge all hooks.
+  //
+  // Defensively omit hook keys whose values are `undefined` — some
+  // OpenCode loader paths iterate returned hooks by key and would
+  // dereference an undefined slot. Prior release cycles chased two
+  // related-looking errors (`M.config` / `S.auth` / `V[G]` inside the
+  // minified OpenCode bundle) to this shape before the real culprit —
+  // a non-default named export on this file — was identified. Keeping
+  // the hooks object shape tight is cheap correctness insurance either
+  // way.
   const hooks: Hooks = {
     // Config hook: register agents, commands, MCPs, skills
     config: async (config) => {
@@ -239,10 +175,21 @@ const plugin: Plugin = async (input) => {
       if (notifyHooks.event) await notifyHooks.event(input);
       if (costTrackerHooks.event) await costTrackerHooks.event(input);
     },
-
-    // chat.message from autopilot (resets iterations on user message)
-    "chat.message": autopilotHooks["chat.message"],
   };
+
+  // Only attach optional sub-hooks when they actually exist. Leaving
+  // `hook["chat.params"] = undefined` would blow up OpenCode's loader
+  // (see comment above).
+  if (autopilotHooks["chat.params"] !== undefined) {
+    hooks["chat.params"] = autopilotHooks["chat.params"];
+  }
+  if (autopilotHooks["chat.message"] !== undefined) {
+    hooks["chat.message"] = autopilotHooks["chat.message"];
+  }
+  if (autopilotHooks["experimental.session.compacting"] !== undefined) {
+    hooks["experimental.session.compacting"] =
+      autopilotHooks["experimental.session.compacting"];
+  }
 
   return hooks;
 };

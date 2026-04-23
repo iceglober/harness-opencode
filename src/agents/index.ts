@@ -116,13 +116,20 @@ function agentFromPrompt(
 
 // ---- Permission blocks (reused across primary agents) ----
 
-// Read-only reviewers (qa-reviewer, qa-thorough) use
-// `bash: "allow"` — destructive-command safety is enforced at the global
-// `permission.bash` layer in src/index.ts (applyConfig), and each agent's
-// system prompt forbids destructive operations. An earlier per-subagent
-// object-form rule-map was apparently misfiring on pipelined read-only
-// commands (e.g. `git show <ref>:<path> | sed -n 'N,Mp'`), producing
-// permission-ask prompts that broke review flow.
+// Read-only reviewers (qa-reviewer, qa-thorough) use `bash: "allow"` as
+// a plain scalar. Destructive-command safety for these agents relies on
+// their read-only role and system prompt — they are never asked to run
+// `rm -rf`, `sudo`, force-push, etc.
+//
+// History: earlier iterations tried (a) per-subagent object-form rule-
+// maps (misfired on pipelined commands like `git show <ref>:<path> |
+// sed -n 'N,Mp'`), and (b) a scalar-allow agent layer paired with a
+// global object-form rule-map in applyConfig (still misfired — OpenCode
+// re-evaluated the global map and emitted ask-prompts for trivial reads
+// like `git branch --show-current`, breaking reviewer flow). The global
+// bash default was removed entirely; destructive-command denies now
+// live only on primary agents (orchestrator, build) that actually run
+// shell commands with mutation potential.
 
 const ORCHESTRATOR_PERMISSIONS = {
   edit: "allow" as const,
