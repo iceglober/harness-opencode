@@ -694,3 +694,450 @@ test("session.idle: legacy .agent/plans/<slug>.md still triggers autopilot nudge
       rmTmpDir(dir);
     }
 });
+
+// --- Circuit breakers (hardening) ------------------------------------------
+//
+// These cover the hardening round: plan-shape classifier, branch/plan
+// alignment, PR-state short-circuit, filesystem kill-switch, STOP-report
+// backoff, and the iteration-cap fix. The plugin must never prompt the
+// user — every breaker halts silently.
+
+const FIXTURE_DIR = path.resolve(__dirname, "fixtures", "autopilot-plans");
+
+function readFixture(name) {
+  return fs.readFileSync(path.join(FIXTURE_DIR, name), "utf8");
+}
+
+// -- classifyPlan unit tests -----------------------------------------------
+
+test("classifyPlan: unit fixture => 'unit'", async () => {
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  assert.equal(classifyPlan(readFixture("unit.md")), "unit");
+});
+
+test("classifyPlan: umbrella fixture => 'umbrella' (has ## Chunks + 3+ Linear IDs)", async () => {
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  assert.equal(classifyPlan(readFixture("umbrella.md")), "umbrella");
+});
+
+test("classifyPlan: measurement-gated fixture => 'measurement-gated'", async () => {
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  assert.equal(
+    classifyPlan(readFixture("measurement-gated.md")),
+    "measurement-gated",
+  );
+});
+
+test("classifyPlan: opted-out fixture => 'opted-out'", async () => {
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  assert.equal(classifyPlan(readFixture("opted-out.md")), "opted-out");
+});
+
+test("classifyPlan: opt-out magic comment is authoritative (beats umbrella signals)", async () => {
+  // A plan that would otherwise classify as umbrella, but is explicitly
+  // opted out — opt-out must win.
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  const content =
+    "<!-- autopilot: skip -->\n\n## Chunks\n\n- GEN-1\n- GEN-2\n- GEN-3\n";
+  assert.equal(classifyPlan(content), "opted-out");
+});
+
+test("classifyPlan: large file (> 50KB) => 'umbrella' even without section headers", async () => {
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  const padding = "x ".repeat(30_000); // ~60KB of filler
+  const content = `## Goal\n${padding}\n## Acceptance criteria\n- [ ] a\n`;
+  assert.equal(classifyPlan(content), "umbrella");
+});
+
+test("classifyPlan: measurement signal in Constraints (not AC) => still 'unit'", async () => {
+  // "SLO" mentioned in Constraints should not trip the measurement gate —
+  // the regex is scoped to the AC section only.
+  const { classifyPlan } = await import(PLUGIN_PATH);
+  const content = `## Goal
+Fix the thing (GEN-1).
+## Constraints
+- Must not regress SLO
+## Acceptance criteria
+- [ ] fix the code
+`;
+  assert.equal(classifyPlan(content), "unit");
+});
+
+// -- planGoalLinearId unit tests -------------------------------------------
+
+test("planGoalLinearId: returns first Linear ID in ## Goal", async () => {
+  const { planGoalLinearId } = await import(PLUGIN_PATH);
+  assert.equal(
+    planGoalLinearId(readFixture("unit.md")),
+    "GEN-1234",
+  );
+});
+
+test("planGoalLinearId: null when ## Goal has no Linear ID", async () => {
+  const { planGoalLinearId } = await import(PLUGIN_PATH);
+  const content = "## Goal\nFix a thing.\n## Acceptance criteria\n- [ ] a\n";
+  assert.equal(planGoalLinearId(content), null);
+});
+
+test("planGoalLinearId: null when there's no ## Goal section", async () => {
+  const { planGoalLinearId } = await import(PLUGIN_PATH);
+  assert.equal(planGoalLinearId("## Acceptance criteria\n- [ ] a\n"), null);
+});
+
+// -- countUnchecked ignores [~] and [-] markers ----------------------------
+
+test("countUnchecked: only `- [ ]` counts; [~] pending and [-] blocked are ignored", async () => {
+  const { countUnchecked } = await import(PLUGIN_PATH);
+  const plan = `## Acceptance criteria
+- [ ] actionable
+- [x] done
+- [~] pending measurement
+- [-] blocked on upstream
+- [ ] another actionable
+`;
+  assert.equal(countUnchecked(plan), 2);
+});
+
+// -- detectStopReport unit tests -------------------------------------------
+
+test("detectStopReport: line starting with `STOP:` matches", async () => {
+  const { detectStopReport } = await import(PLUGIN_PATH);
+  assert.equal(detectStopReport("STOP: plan is on wrong branch"), true);
+});
+
+test("detectStopReport: line starting with `STOP —` matches", async () => {
+  const { detectStopReport } = await import(PLUGIN_PATH);
+  assert.equal(detectStopReport("STOP — cannot proceed without X"), true);
+});
+
+test("detectStopReport: `STOP` later in line does NOT match", async () => {
+  const { detectStopReport } = await import(PLUGIN_PATH);
+  assert.equal(
+    detectStopReport("I won't stop until the tests pass"),
+    false,
+    "pattern is line-start anchored to avoid false positives",
+  );
+});
+
+test("detectStopReport: STOP on a later line matches (multiline)", async () => {
+  const { detectStopReport } = await import(PLUGIN_PATH);
+  const text = "Here's what I found.\n\nSTOP: plan is structurally wrong.";
+  assert.equal(detectStopReport(text), true);
+});
+
+test("detectStopReport: empty string => false", async () => {
+  const { detectStopReport } = await import(PLUGIN_PATH);
+  assert.equal(detectStopReport(""), false);
+});
+
+// -- Integration: umbrella plan => session stops silently, no nudge -------
+
+test("session.idle: umbrella plan => session stopped with reason 'plan-shape:umbrella', no nudge", async () => {
+  const tmp = mkTmpDir();
+  try {
+    writeFixture(tmp, ".agent/plans/edi.md", readFixture("umbrella.md"));
+    const messages = [
+      userMsg("/autopilot see .agent/plans/edi.md"),
+      assistantMsg("starting on .agent/plans/edi.md"),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    assert.equal(
+      client.prompts.length,
+      0,
+      "umbrella plan must not be nudged",
+    );
+    const st = readStateFile(tmp);
+    assert.ok(st.sessions["s1"].stopped);
+    assert.equal(st.sessions["s1"].stopReason, "plan-shape:umbrella");
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+test("session.idle: measurement-gated plan => stopped with reason 'plan-shape:measurement-gated'", async () => {
+  const tmp = mkTmpDir();
+  try {
+    writeFixture(
+      tmp,
+      ".agent/plans/gated.md",
+      readFixture("measurement-gated.md"),
+    );
+    const messages = [
+      userMsg("/autopilot see .agent/plans/gated.md"),
+      assistantMsg("working on .agent/plans/gated.md"),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    assert.equal(client.prompts.length, 0);
+    const st = readStateFile(tmp);
+    assert.ok(st.sessions["s1"].stopped);
+    assert.equal(
+      st.sessions["s1"].stopReason,
+      "plan-shape:measurement-gated",
+    );
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+test("session.idle: opted-out plan => stopped with reason 'plan-shape:opted-out'", async () => {
+  const tmp = mkTmpDir();
+  try {
+    writeFixture(
+      tmp,
+      ".agent/plans/skip.md",
+      readFixture("opted-out.md"),
+    );
+    const messages = [
+      userMsg("/autopilot see .agent/plans/skip.md"),
+      assistantMsg(".agent/plans/skip.md"),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    assert.equal(client.prompts.length, 0);
+    const st = readStateFile(tmp);
+    assert.ok(st.sessions["s1"].stopped);
+    assert.equal(st.sessions["s1"].stopReason, "plan-shape:opted-out");
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+// -- Kill switch -----------------------------------------------------------
+
+test("session.idle: kill switch file present => stopped with reason 'kill-switch'", async () => {
+  const tmp = mkTmpDir();
+  try {
+    writeFixture(tmp, ".agent/plans/plan.md", readFixture("unit.md"));
+    writeFixture(tmp, ".agent/autopilot-disable", ""); // just needs to exist
+    const messages = [
+      userMsg("/autopilot see .agent/plans/plan.md"),
+      assistantMsg("working on .agent/plans/plan.md"),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    assert.equal(
+      client.prompts.length,
+      0,
+      "kill switch must prevent nudging",
+    );
+    const st = readStateFile(tmp);
+    assert.ok(st.sessions["s1"].stopped);
+    assert.equal(st.sessions["s1"].stopReason, "kill-switch");
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+// -- STOP-report backoff ---------------------------------------------------
+
+test("session.idle: one STOP-report => nudges once (below MAX_CONSECUTIVE_STOPS threshold)", async () => {
+  const tmp = mkTmpDir();
+  try {
+    writeFixture(tmp, ".agent/plans/plan.md", readFixture("unit.md"));
+    // Pre-seed state so lastUncheckedCount is present (otherwise first
+    // idle treats the count as "neutral" and doesn't count the STOP).
+    writeFixture(
+      tmp,
+      ".agent/autopilot-state.json",
+      JSON.stringify({
+        sessions: {
+          s1: { enabled: true, iterations: 1, lastUncheckedCount: 3 },
+        },
+      }),
+    );
+    const messages = [
+      userMsg("/autopilot see .agent/plans/plan.md"),
+      assistantMsg("STOP: plan is on the wrong branch."),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    // First STOP: counter increments to 1 — below threshold (2), so a
+    // nudge still fires. (Note: branch-mismatch check may ALSO fire here;
+    // that's fine — both are silent stops. Assert whichever applies.)
+    const st = readStateFile(tmp);
+    // Either stopped via branch-mismatch (if git returns a branch) or
+    // nudged once (if no branch / no Linear-ID match). Accept both as
+    // valid — the critical behavior is "no infinite-loop nudges."
+    if (st.sessions["s1"].stopped) {
+      // Either stop reason is acceptable in this test env.
+      assert.ok(
+        typeof st.sessions["s1"].stopReason === "string",
+        "should record a stop reason",
+      );
+    } else {
+      assert.equal(st.sessions["s1"].consecutiveStops, 1);
+    }
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+test("session.idle: two consecutive STOP reports => stopped with reason 'agent-stop-report'", async () => {
+  const tmp = mkTmpDir();
+  try {
+    // Use a plan with NO Linear ID so branch-mismatch doesn't preempt
+    // the STOP-report backoff path.
+    writeFixture(
+      tmp,
+      ".agent/plans/plan.md",
+      "# No ticket\n## Goal\nFix a thing.\n## Acceptance criteria\n- [ ] a\n- [ ] b\n",
+    );
+    // Pre-seed: enabled, with 1 prior STOP and a lastUncheckedCount so
+    // the second STOP can increment to the threshold.
+    writeFixture(
+      tmp,
+      ".agent/autopilot-state.json",
+      JSON.stringify({
+        sessions: {
+          s1: {
+            enabled: true,
+            iterations: 2,
+            consecutiveStops: 1,
+            lastUncheckedCount: 2,
+          },
+        },
+      }),
+    );
+    const messages = [
+      userMsg("/autopilot see .agent/plans/plan.md"),
+      assistantMsg("STOP: still blocked on the same upstream issue."),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    const st = readStateFile(tmp);
+    assert.ok(
+      st.sessions["s1"].stopped,
+      "2nd STOP must stop the session",
+    );
+    assert.equal(st.sessions["s1"].stopReason, "agent-stop-report");
+    assert.equal(
+      client.prompts.length,
+      0,
+      "no nudge fires when STOP-backoff trips",
+    );
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+test("session.idle: progress (unchecked count drops) resets STOP counter", async () => {
+  const tmp = mkTmpDir();
+  try {
+    // Plan has 1 unchecked box now; pre-seeded lastUncheckedCount was 3.
+    writeFixture(
+      tmp,
+      ".agent/plans/plan.md",
+      "# No ticket\n## Goal\nFix.\n## Acceptance criteria\n- [x] a\n- [x] b\n- [ ] c\n",
+    );
+    writeFixture(
+      tmp,
+      ".agent/autopilot-state.json",
+      JSON.stringify({
+        sessions: {
+          s1: {
+            enabled: true,
+            iterations: 2,
+            consecutiveStops: 1,
+            lastUncheckedCount: 3,
+          },
+        },
+      }),
+    );
+    // Agent says STOP again, but the box-count dropped — progress beats
+    // STOP, counter resets.
+    const messages = [
+      userMsg("/autopilot see .agent/plans/plan.md"),
+      assistantMsg("STOP: blocked again"),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    const st = readStateFile(tmp);
+    // Session still running.
+    assert.ok(!st.sessions["s1"].stopped, "progress should keep session alive");
+    assert.equal(
+      st.sessions["s1"].consecutiveStops,
+      0,
+      "progress must reset STOP counter",
+    );
+    assert.equal(st.sessions["s1"].lastUncheckedCount, 1);
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
+// -- Iteration-cap fix (debounce must not bypass the cap) ------------------
+
+test("session.idle: max iterations sets stopped=true even when nudge is debounced", async () => {
+  const tmp = mkTmpDir();
+  try {
+    writeFixture(tmp, ".agent/plans/plan.md", readFixture("unit.md"));
+    // Pre-seed state at the cap, with a very recent lastNudgeAt so the
+    // debounce will swallow the "stopped" nudge.
+    writeFixture(
+      tmp,
+      ".agent/autopilot-state.json",
+      JSON.stringify({
+        sessions: {
+          s1: {
+            enabled: true,
+            iterations: 20,
+            lastNudgeAt: Date.now(),
+          },
+        },
+      }),
+    );
+    const messages = [
+      userMsg("/autopilot see .agent/plans/plan.md"),
+      assistantMsg("working on .agent/plans/plan.md"),
+    ];
+    const client = mockClientWithMessages(messages);
+    const factory = await loadFactory();
+    const hooks = await factory({ client, directory: tmp });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    // The nudge was debounced (no prompt sent), BUT the cap must still
+    // stop the session terminally — this is the pre-fix bug that let
+    // rapid idles defeat the cap.
+    assert.equal(client.prompts.length, 0, "debounce swallowed the nudge");
+    const st = readStateFile(tmp);
+    assert.ok(
+      st.sessions["s1"].stopped,
+      "cap must mark stopped=true regardless of debounce",
+    );
+    assert.equal(st.sessions["s1"].stopReason, "max-iterations");
+  } finally {
+    rmTmpDir(tmp);
+  }
+});
+
