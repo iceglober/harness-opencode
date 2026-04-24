@@ -101,28 +101,14 @@ describe("docs/plugin-architecture.md", () => {
     expect(content).toContain("HARNESS_OPENCODE_PERM_DEBUG");
   });
 
-  it("changeset for qa-reviewer-bash-prompts-root-cause exists and is a patch", () => {
-    const changesetDir = path.join(ROOT, ".changeset");
-    expect(fs.existsSync(changesetDir)).toBe(true);
-    const files = fs
-      .readdirSync(changesetDir)
-      .filter((f) => f.endsWith(".md") && f !== "README.md");
-    // At least one changeset mentions this fix.
-    const matches = files.filter((f) => {
-      const body = fs.readFileSync(path.join(changesetDir, f), "utf8");
-      return (
-        body.toLowerCase().includes("bash") &&
-        body.toLowerCase().includes("prompt")
-      );
-    });
-    expect(matches.length).toBeGreaterThanOrEqual(1);
-    // Must be a patch bump.
-    for (const f of matches) {
-      const body = fs.readFileSync(path.join(changesetDir, f), "utf8");
-      // Frontmatter shape: ---\n"@glrs-dev/harness-opencode": patch\n---
-      expect(body).toMatch(/"@glrs-dev\/harness-opencode":\s*patch/);
-    }
-  });
+  // Changeset-existence test removed: the changeset for
+  // qa-reviewer-bash-prompts-root-cause was consumed by the Changesets bot
+  // in the 0.7.1 version bump. Asserting its existence permanently fails
+  // on changeset-release/main (and any future release branch) because the
+  // bot deletes .changeset/*.md files as part of the version bump commit.
+  // The guard served its purpose during the originating PR; the doc-content
+  // test above ("describes the bash-permission root-cause") is the durable
+  // regression guard.
 });
 
 /**
