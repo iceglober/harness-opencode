@@ -29,7 +29,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import { createAgents } from "./agents/index.js";
+import { createAgents, AGENT_TIERS } from "./agents/index.js";
+import type { AgentConfig } from "@opencode-ai/sdk";
 import { createCommands } from "./commands/index.js";
 import { createMcpConfig } from "./mcp/index.js";
 import { getSkillsRoot } from "./skills/paths.js";
@@ -86,9 +87,57 @@ export function writePermDebugSnapshot(config: Config): void {
   }
 }
 
+/**
+ * Resolve `harness.models` tier/per-agent overrides onto an agent map.
+ *
+ * Precedence (first match wins):
+ *   1. `harness.models.<agent-name>` — per-agent override
+ *   2. `harness.models.<tier>`       — tier-level override
+ *   3. (no change)                   — plugin default from createAgents()
+ *
+ * Values may be a single string or an array of strings (fallback chain).
+ * v1 uses the first element only; the array shape is forward-compatible
+ * with runtime fallback in a future version.
+ *
+ * Mutates `agents` in place — returns the same reference for convenience.
+ */
+export function resolveHarnessModels(
+  agents: Record<string, AgentConfig>,
+  config: Config,
+): Record<string, AgentConfig> {
+  const modelsConfig = (config as any).harness?.models as
+    | Record<string, string | string[]>
+    | undefined;
+  if (!modelsConfig) return agents;
+
+  for (const [agentName, agentCfg] of Object.entries(agents)) {
+    // 1. Per-agent override
+    const perAgent = modelsConfig[agentName];
+    if (perAgent !== undefined) {
+      agentCfg.model = Array.isArray(perAgent) ? perAgent[0] : perAgent;
+      continue;
+    }
+
+    // 2. Tier override
+    const tier = AGENT_TIERS[agentName];
+    if (tier) {
+      const perTier = modelsConfig[tier];
+      if (perTier !== undefined) {
+        agentCfg.model = Array.isArray(perTier) ? perTier[0] : perTier;
+      }
+    }
+    // 3. No match — plugin default stays
+  }
+
+  return agents;
+}
+
 export function applyConfig(config: Config): void {
-  // Agents: user-wins (user's opencode.json overrides our defaults)
+  // Agents: build from prompts, apply harness.models overrides, then
+  // user-wins spread (user's opencode.json agent overrides take final
+  // precedence).
   const ourAgents = createAgents();
+  resolveHarnessModels(ourAgents, config);
   (config as any).agent = { ...ourAgents, ...((config as any).agent ?? {}) };
 
   // Commands: user-wins
