@@ -1,5 +1,97 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- [#69](https://github.com/iceglober/harness-opencode/pull/69) [`a65f944`](https://github.com/iceglober/harness-opencode/commit/a65f9448d43e733279056b3331032d163e2a7cc0) Thanks [@iceglober](https://github.com/iceglober)! - Simplify `/autopilot` to the canonical Ralph loop. The previous implementation had grown to a 1344-line plugin, a 227-line prompt, a 9-rule orchestrator carve-out, and a 13-field per-session state machine with five independent "exit detectors." A recent failure session showed the plugin fighting the orchestrator for control and firing stale nudges on a non-autopilot session. The architecture had drifted far from the Ralph pattern it was modeled on (`while :; do cat PROMPT.md | claude-code ; done` — one prompt, stateless agent, filesystem is the state).
+
+  This release strips autopilot to what `/autopilot` actually needs to do: detect the slash-command invocation, send one kind of nudge while the plan has unchecked boxes, stop when the boxes are checked or when a max-iterations cap fires.
+
+  **What changed**
+
+  - `src/plugins/autopilot.ts`: 1344 → 292 lines. One activation gate (`/autopilot` or `AUTOPILOT mode` in the session's first user message only), one nudge string, one max-iterations cap, one debounce. Removed the completion-promise sentinel (`<promise>DONE</promise>`), the orchestrator EXIT sentinel (`<autopilot>EXIT</autopilot>`), the verifier-verdict tokens (`[AUTOPILOT_VERIFIED]` / `[AUTOPILOT_UNVERIFIED]`), the `@autopilot-verifier` delegation, the shipped-probe (spawning `git merge-base` + `gh pr list`), the substrate-hash stagnation detector, the user-stop-token detection, and every piece of state that supported them. Stop conditions now come from the plan file on disk: zero unchecked `- [ ]` under `## Acceptance criteria` → silent stop; max iterations → one final "stopped" nudge, then silence; user types anything → iterations reset.
+  - `src/commands/prompts/autopilot.md`: 227 → 77 lines. Replaced the 9-rule preamble with a single paragraph describing the contract. Kept issue-ref classification (Linear, GitHub, Jira MCPs), the five-phase handoff, and the guardrails that matter (never ask scoping questions, never commit/push/open-PR, never invoke `/ship` yourself). Removed the sequence-loop-of-issues feature — it was never actually exercised and the queue file (`.agent/autopilot-queue.json`) added more state drift than it solved.
+  - `src/agents/prompts/orchestrator.md`: removed the 3-paragraph `# Autopilot mode` self-check section, the Phase 1.5 autopilot carve-out explaining forbidden tokens, the Phase 4 autopilot-conditional completion-promise emission, and the hard rule forbidding self-activation. Replaced with a 2-paragraph section: autopilot activates only via `/autopilot`; idle nudges are "keep going" signals; stop when all boxes are `[x]`.
+  - `src/agents/prompts/autopilot-verifier.md`: deleted. The agent was only called from the now-removed completion-promise protocol.
+  - `src/agents/index.ts`: dropped the `autopilot-verifier` registration and the `AUTOPILOT_VERIFIER_PERMISSIONS` constant.
+  - `src/index.ts`: dropped the dead `chat.params` and `experimental.session.compacting` hook references (the autopilot plugin never actually implemented them).
+  - `test/autopilot-plugin.test.js`: 1389 → 469 lines. Rewrote to exercise the new surface: activation gate, idle-nudge firing, plan-done silence, max-iterations cap, debounce, user-message reset, non-target-agent ignore.
+  - `test/qa-reviewer-flow.sh`: deleted. The script targeted paths under `home/.claude/agents/` that stopped existing when the repo migrated to the npm plugin layout.
+  - `test/agents.test.ts`: updated expected subagent count 13 → 12, dropped `autopilot-verifier`-specific assertions.
+  - `README.md`: removed `autopilot-verifier` from the subagent list.
+
+  **Behavior notes**
+
+  - Autopilot activation remains strictly opt-in via `/autopilot`. The `detectActivation` helper still scans only the session's FIRST user message, so pasted transcripts or prose that descriptively mention `/autopilot` or `AUTOPILOT mode` do not retroactively activate a vanilla session.
+  - `/ship` stays the human gate. The orchestrator prints "Done. Run `/ship <plan>`" and stops.
+  - On stop, the plugin no longer writes acknowledgement nudges to the session. Exits are silent — the signal is the plan's boxes or the single max-iterations message.
+  - If you relied on the `<promise>DONE</promise>` sentinel or `@autopilot-verifier` in a custom workflow, that workflow needs rework. They are gone.
+
+- [#71](https://github.com/iceglober/harness-opencode/pull/71) [`154af1a`](https://github.com/iceglober/harness-opencode/commit/154af1ad439ca13d8987f31bb27167fcdf18cf25) Thanks [@iceglober](https://github.com/iceglober)! - **Plans are now repo-shared instead of per-worktree.** Agent-written plans move from `$WORKTREE/.agent/plans/<slug>.md` to `~/.glorious/opencode/<repo-folder>/plans/<slug>.md` — visible from every worktree of the same repo, survive `/fresh`, no longer entangled with the transient worktree they happened to be drafted in.
+
+  ## Why
+
+  A plan describes work against a codebase, not against a worktree. Tying plan storage to the transient worktree wasted the plan when the worktree rotated and fragmented visibility across terminal tabs. If you drafted a plan in tab A and later switched to tab B (same repo, different worktree), the plan was invisible. If tab A ran `/fresh`, the plan vanished. This change fixes both.
+
+  ## What moved
+
+  - **Storage location:** `$WORKTREE/.agent/plans/<slug>.md` → `~/.glorious/opencode/<repo-folder>/plans/<slug>.md`.
+  - **`<repo-folder>` derivation:** `git rev-parse --git-common-dir` → `basename(dirname(...))`. Two worktrees of the same repo produce the same key, so plans are truly repo-scoped.
+  - **Env override:** `$GLORIOUS_PLAN_DIR` overrides the base (default `~/.glorious/opencode`), matching the existing `$GLORIOUS_COST_TRACKER_DIR` precedent. Leading `~` tilde-expands via `os.homedir()`.
+
+  ## Migration
+
+  On the first invocation of `bunx @glrs-dev/harness-opencode plan-dir` inside a given worktree (which the plan agent runs at plan-write time), any existing `.agent/plans/*.md` files are automatically moved to the new location. A `.migrated` marker is written to prevent re-runs. Collisions are handled safely — identical content is deduped (source removed), differing content leaves the source in place with a stderr warning so you can resolve manually.
+
+  No manual action required for users on floating semver; next `bun update` picks up the new behavior, and the first plan-related command in each worktree completes the migration.
+
+  ## Backward compatibility
+
+  Legacy `.agent/plans/<slug>.md` references in older chat transcripts continue to work. The autopilot plugin's `findPlanPath` regex matches both shapes, and the runtime reader uses `path.isAbsolute` to anchor relative paths against the worktree (legacy) or pass absolute paths through as-is (new). The prior `/autopilot` / `/ship` invocations on older references still resolve correctly.
+
+  ## New CLI subcommand
+
+  ```
+  bunx @glrs-dev/harness-opencode plan-dir
+  ```
+
+  Prints the absolute resolved plan directory for the current working directory, creates it if missing, runs one-shot migration if needed, exits 0. Prompts now use this to resolve the repo-specific storage path at runtime:
+
+  ```bash
+  PLAN_DIR="$(bunx @glrs-dev/harness-opencode plan-dir)"
+  echo "$PLAN_DIR/my-slug.md"
+  ```
+
+  The plan agent's permission block is narrowed to allow exactly this command (`*` → deny, `bunx @glrs-dev/harness-opencode plan-dir*` → allow). Every other bash invocation from the plan agent is still denied — the "plan agent writes only plan files" invariant is preserved.
+
+  ## New permission allowlist entry
+
+  `~/.glorious/opencode/**` is added to the `external_directory` allowlist so agents can read/write plans outside the worktree without OpenCode prompting on every access. User values in `opencode.json` continue to win.
+
+  ## Tests
+
+  47 new tests:
+
+  - 21 for `src/plan-paths.ts` helpers — `getRepoFolder` (canonical / worktree / non-git / bare / whitespace), `getPlanDir` (default / env / tilde / create / idempotent), `migratePlans` (no-op / move / idempotent / collision-same / collision-differ / partial / non-markdown), plus 4 for the CLI subcommand.
+  - 9 for autopilot regex + integration — 5 regex coverage, 3 absolute-path integration (including a regression guard for the `path.isAbsolute` reader bug), plus 1 legacy-path backward-compat assertion.
+  - 3 for agent prompt content + the new plan-dir permission shape.
+  - 1 for the `external_directory` allowlist entry + its user-wins case.
+  - 3 for the fallback-string templates in `AUTOPILOT_VERIFICATION_PROMPT` and `AUTOPILOT_COMPLETE_MESSAGE`.
+  - 1 CI guard blocking future prompt regressions that would re-introduce `.agent/plans` references.
+
+  Full suite: 209/209 pass. Typecheck clean. Build clean.
+
+  ## Dog-food proof
+
+  The plan describing this migration was written to the old location (`.agent/plans/plans-repo-shared-storage.md`), then migrated to the new location (`~/.glorious/opencode/glorious-opencode/plans/plans-repo-shared-storage.md`) by the CLI it defines, during final verification. The plan ate its own tail.
+
+### Patch Changes
+
+- [#72](https://github.com/iceglober/harness-opencode/pull/72) [`e63bcf6`](https://github.com/iceglober/harness-opencode/commit/e63bcf6cd289ea45899e409f197a84cd9f672d09) Thanks [@iceglober](https://github.com/iceglober)! - Orchestrator now recognizes plugin-provided slash commands (`/fresh`, `/ship`, `/review`, `/autopilot`, `/research`, `/init-deep`, `/costs`) when they appear as the first token of the first user message and weren't dispatched by the OpenCode TUI. In that case the orchestrator reads the command template from the bundled plugin cache, substitutes `$ARGUMENTS`, and executes it inline — same as if the TUI had dispatched normally.
+
+  Context: some sessions receive the raw slash-command text as a plain user message (TUI dispatch silently misses for reasons we haven't pinned down — copy-paste, certain keyboard shortcuts, etc.). Without a fallback, the orchestrator would improvise, e.g. interpret `/fresh meeting prep` as "do something fresh-ish" and go hunting for `gs wt` subcommands instead of running `/fresh`. Prompt-only change; no runtime behavior outside the orchestrator prompt itself. Unknown `/<token>` commands and mid-message slashes still fall through to normal Phase 1 — fallback is scoped tightly to the seven shipped commands at start-of-first-message only.
+
 ## 0.6.1
 
 ### Patch Changes
