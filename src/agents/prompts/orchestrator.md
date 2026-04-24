@@ -85,7 +85,7 @@ Before Phase 1, run this probe inline (no subagent) — sessions typically start
 1. `pwd` — confirm working directory.
 2. `git status --short` — see uncommitted work.
 3. `git log --oneline -5` — recent history.
-4. `ls .agent/plans/ 2>/dev/null | tail -5` — plan files on disk.
+4. `PLAN_DIR="$(bunx @glrs-dev/harness-opencode plan-dir 2>/dev/null)" && ls "$PLAN_DIR" 2>/dev/null | tail -5` — plans for this repo (resolved from `~/.glorious/opencode/<repo>/plans/`; falls back silently if the CLI or repo isn't available).
 
 For each plan found, read it and count unchecked acceptance items. Classify as **stale** (ignore) only if `git merge-base --is-ancestor HEAD origin/main` (fallback `origin/master`) exits 0 — meaning this worktree's work is already landed. If classification fails (no origin fetched, detached HEAD, etc.), treat as active — over-surface is safer than silently dropping.
 
@@ -195,9 +195,9 @@ For substantial work (frame already confirmed in Phase 1.5), do NOT write the pl
    - A short grounding summary: the real files/symbols that will change, relevant patterns, constraints you already know
    - Any explicit open questions or options you want the plan to resolve
 
-   `@plan` returns the plan path (`.agent/plans/<slug>.md`). It handles gap-analysis, drafting, and `@plan-reviewer` adversarial review internally. Do not call `@gap-analyzer` or `@plan-reviewer` yourself — `@plan` owns that loop.
+   `@plan` returns the plan path — an absolute path under the repo-shared plan directory (e.g. `~/.glorious/opencode/<repo>/plans/<slug>.md`). It handles gap-analysis, drafting, and `@plan-reviewer` adversarial review internally. Do not call `@gap-analyzer` or `@plan-reviewer` yourself — `@plan` owns that loop.
 
-4. **Inform the user.** "Plan written to `.agent/plans/<slug>.md` and reviewed. Proceeding to implementation. I'll report back when QA passes."
+4. **Inform the user.** "Plan written to `<plan-path>` and reviewed. Proceeding to implementation. I'll report back when QA passes."
 
    Do NOT ask for permission to proceed. The plan is the contract; once `@plan` returns a reviewed path, execute it. The user can interrupt at any time by typing.
 
@@ -296,7 +296,7 @@ Report to the user:
 
 > Done. <One-sentence summary of what was built.>
 > Local commits made this session: <count> (listed below).
-> Run `/ship .agent/plans/<slug>.md` to finalize — review, squash, push, and open a PR.
+> Run `/ship <plan-path>` to finalize — review, squash, push, and open a PR.
 
 Include `git log --oneline <base>..HEAD` output showing the local commits.
 
@@ -316,7 +316,7 @@ STOP at Phase 5 — don't push or open a PR without the user's explicit `/ship` 
 
 # Subagent reference (recap)
 
-- `@plan` — writes `.agent/plans/<slug>.md` and runs its own gap-analysis + adversarial-review loop. Orchestrator delegates Phase 2 plan authoring here.
+- `@plan` — writes the plan under the repo-shared plan directory (resolves via `bunx @glrs-dev/harness-opencode plan-dir`; absolute path returned) and runs its own gap-analysis + adversarial-review loop. Orchestrator delegates Phase 2 plan authoring here.
 - `@code-searcher` — fast codebase grep + structural search, returns paths and short snippets
 - `@lib-reader` — local-only docs/library lookups (node_modules, type defs, project docs)
 - `@qa-reviewer` — fast adversarial reviewer (Sonnet). Trusts the orchestrator's recent green output within this session, focuses on semantic + scope checks. Default for Phase 4.

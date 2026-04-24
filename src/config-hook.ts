@@ -99,6 +99,7 @@ export function applyConfig(config: Config): void {
     ...existingPermission,
     external_directory: {
       "~/.glorious/worktrees/**": "allow",
+      "~/.glorious/opencode/**": "allow",  // repo-shared plan storage (see src/plan-paths.ts) + cost-tracker data
       "/tmp/**": "allow",
       "/private/tmp/**": "allow",          // macOS: /tmp symlinks to /private/tmp
       "/var/folders/**/T/**": "allow",     // macOS $TMPDIR expansion

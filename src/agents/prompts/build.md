@@ -68,7 +68,7 @@ Before declaring complete:
 Delegate to `@qa-reviewer` via the task tool. Provide the plan path.
 
 `@qa-reviewer` returns either:
-- `[PASS]` — report success to the user with the next command: `/ship .agent/plans/<slug>.md`
+- `[PASS]` — report success to the user with the next command: `/ship <plan-path>` (use the absolute plan path you received as input)
 - `[FAIL]` — fix each reported issue. Re-run final verification. Re-delegate to `@qa-reviewer`. No retry limit.
 
 # Hard rules

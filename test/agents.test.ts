@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createAgents } from "../src/agents/index.js";
+import { createCommands } from "../src/commands/index.js";
 import { applyConfig } from "../src/config-hook.js";
 
 describe("createAgents", () => {
@@ -210,6 +211,25 @@ describe("subagent permissions", () => {
     }
   });
 
+  it("plan agent bash rules: deny-all except the plan-dir CLI subcommand", () => {
+    // The plan agent needs to resolve the repo-shared plan dir before
+    // writing plans there. It does that via the harness's own CLI
+    // subcommand. Everything else remains denied, preserving the
+    // "plan writes only plan files" invariant.
+    const bash = (agents["plan"] as any).permission.bash;
+    expect(typeof bash).toBe("object");
+    expect(bash["*"]).toBe("deny");
+    expect(bash["bunx @glrs-dev/harness-opencode plan-dir"]).toBe("allow");
+    expect(bash["bunx @glrs-dev/harness-opencode plan-dir *"]).toBe("allow");
+  });
+
+  it("plan agent description references the repo-shared plan directory (not .agent/plans)", () => {
+    const desc = (agents["plan"] as any).description as string;
+    expect(desc).toContain("plan-dir");
+    // Legacy path reference must not linger in the description.
+    expect(desc).not.toContain(".agent/plans");
+  });
+
   it("agents-md-writer preserves bash: ask and edit: allow", () => {
     const perm = (agents["agents-md-writer"] as any).permission;
     expect(perm.bash).toBe("ask");
@@ -320,6 +340,50 @@ describe("prompt content assertions", () => {
   it("orchestrator subagent reference lists both qa-reviewer and qa-thorough", () => {
     expect(orchestrator).toMatch(/- `@qa-reviewer`/);
     expect(orchestrator).toMatch(/- `@qa-thorough`/);
+  });
+
+  // ---- Plan-storage migration regression guards (a7 in the
+  // plans-repo-shared-storage plan) ----
+  //
+  // These tests lock in that prompts reference the repo-shared plan
+  // directory via the resolver CLI rather than the legacy per-worktree
+  // `.agent/plans/<slug>.md` path. CI's dangling-paths guard catches the
+  // literal string; these tests go further and assert the POSITIVE
+  // presence of the new integration point so a future prompt edit that
+  // silently removes the CLI reference is caught too.
+
+  const planPrompt = agents["plan"]!.prompt as string;
+  const autopilotCommand = createCommands()["autopilot"]!.template as string;
+
+  it("plan agent prompt body mentions GLORIOUS_PLAN_DIR or bunx harness-opencode plan-dir helper", () => {
+    // The plan agent must know how to resolve the new plan dir. One of
+    // these references must appear so the agent actually invokes the
+    // resolver rather than writing to a hardcoded path.
+    const hasResolver =
+      planPrompt.includes("bunx @glrs-dev/harness-opencode plan-dir") ||
+      planPrompt.includes("GLORIOUS_PLAN_DIR");
+    expect(hasResolver).toBe(true);
+  });
+
+  it("orchestrator Phase 0 probe references new plan dir (or a shell snippet that resolves it)", () => {
+    // Phase 0 bootstrap should probe for plans using the resolver, not
+    // the legacy `ls .agent/plans/`.
+    expect(orchestrator).toContain("bunx @glrs-dev/harness-opencode plan-dir");
+    // Legacy probe must be gone.
+    expect(orchestrator).not.toContain("ls .agent/plans/");
+  });
+
+  it("autopilot command prompt handoff uses <plan-path> or absolute shape, not .agent/plans/<slug>", () => {
+    // The user-facing `/ship` handoff line in the autopilot command
+    // prompt must not print the legacy path shape. Either the abstract
+    // `<plan-path>` placeholder (when dynamic) or the annotated absolute
+    // template (when pedagogical) is acceptable.
+    expect(autopilotCommand).not.toMatch(/\/ship\s+\.agent\/plans\/<slug>\.md/);
+    // Must reference one of the new shapes in the ship example.
+    const hasNewShape =
+      autopilotCommand.includes("/ship <plan-path>") ||
+      autopilotCommand.includes("/ship ~/.glorious/opencode/");
+    expect(hasNewShape).toBe(true);
   });
 });
 

@@ -74,4 +74,4 @@ Your single handoff message should include:
 - What was classified — the resolved tracker reference or free-form summary
 - Plan path if created
 - 1-2 sentence summary of changes
-- Exact command to ship: `/ship .agent/plans/<slug>.md`
+- Exact command to ship: `/ship <plan-path>` (the absolute path the plan agent returned)

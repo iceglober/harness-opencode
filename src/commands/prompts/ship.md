@@ -36,7 +36,7 @@ Classify the shape silently and proceed:
 
    <one paragraph summarizing what and why>
 
-   Plan: .agent/plans/<slug>.md       ← only if a plan path was given
+   Plan: <plan-path>                  ← only if a plan path was given (absolute; e.g. ~/.glorious/opencode/<repo>/plans/<slug>.md)
    ```
 3. `git add -u && git commit -m "<subject>" -m "<body>"` — do it. No confirmation prompt.
 

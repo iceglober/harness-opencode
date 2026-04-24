@@ -46,7 +46,8 @@ const NUDGE_DEBOUNCE_MS = 30_000;
  */
 const AUTOPILOT_MARKER_RE = /(^|\s)\/autopilot(\s|$)|AUTOPILOT mode/;
 
-const PLAN_PATH_RE = /\.agent\/plans\/[\w-]+\.md/;
+// PLAN_PATH_RE is defined further down, next to findPlanPath where the
+// matching rules live.
 
 const NUDGE_TEXT =
   "[autopilot] Session idled with unchecked acceptance criteria. " +
@@ -127,6 +128,30 @@ function detectActivation(messages: RawMessage[]): boolean {
   }
   return false;
 }
+
+// Plan paths come in two shapes:
+//
+//   1. Legacy (per-worktree):
+//        .agent/plans/<slug>.md
+//
+//   2. Repo-shared (current, since the plan-storage migration):
+//        <absolute-prefix>/<repo-folder>/plans/<slug>.md
+//        e.g. /Users/alice/.glorious/opencode/my-repo/plans/fix-bug.md
+//
+// The regex matches BOTH shapes so autopilot can still latch onto plan
+// references in older sessions / legacy fixtures. Constraints:
+//   - slug matches `[\w-]+` (letters, digits, underscore, dash)
+//   - path ends in `.md`
+//   - prefix is either `.agent/plans/` (legacy) or any non-whitespace run
+//     ending in `/plans/` whose preceding segment is a repo-folder token
+//     (`[\w.-]+`). This filters out noise like `foo/plans/bar.md` buried
+//     in a sentence while still catching every legitimate absolute path.
+//
+// We scan messages newest-to-oldest and alternation is left-to-right, so
+// the first match wins — legacy references surface first when present,
+// which matches the pre-migration behavior.
+const PLAN_PATH_RE =
+  /(?:\.agent\/plans\/[\w-]+\.md|(?:\/[^\s`"']*)?\/[\w.-]+\/plans\/[\w-]+\.md)/;
 
 function findPlanPath(messages: RawMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -222,12 +247,20 @@ const plugin: Plugin = async ({ client, directory }) => {
       const planPath = findPlanPath(messages);
       if (!planPath) return;
 
+      // Plan paths may be legacy-relative (`.agent/plans/<slug>.md`) or
+      // absolute (`~/.glorious/opencode/<repo>/plans/<slug>.md`) — after
+      // the plan-storage migration both shapes can appear in chat. Use
+      // `path.isAbsolute` to decide whether to anchor against the
+      // worktree directory or pass through as-is. `path.join(cwd, abs)`
+      // would be wrong because Node concatenates rather than preserving
+      // the absolute-ness of the second argument.
+      const resolvedPlanPath = path.isAbsolute(planPath)
+        ? planPath
+        : path.join(directory, planPath);
+
       let planContent: string;
       try {
-        planContent = await fs.readFile(
-          path.join(directory, planPath),
-          "utf8",
-        );
+        planContent = await fs.readFile(resolvedPlanPath, "utf8");
       } catch {
         // Plan path referenced but file missing — could be pre-Phase-2;
         // wait for the plan to appear.

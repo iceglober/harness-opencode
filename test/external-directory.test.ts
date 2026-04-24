@@ -28,12 +28,25 @@ describe("applyConfig — external_directory defaults", () => {
     expect(extDir["~/.local/share/**"]).toBe("allow");
   });
 
+  it("applyConfig allows ~/.glorious/opencode/** for repo-shared plan storage", () => {
+    // The plan-storage migration moved plans out of per-worktree
+    // `$WORKTREE/.agent/plans/` into `~/.glorious/opencode/<repo>/plans/`.
+    // Without this entry agents hit a permission prompt every time they
+    // read or write a plan file, which breaks the lights-out autopilot
+    // flow. See `src/plan-paths.ts` for the storage-shape contract.
+    const config: any = {};
+    applyConfig(config);
+    const extDir = config.permission?.external_directory ?? {};
+    expect(extDir["~/.glorious/opencode/**"]).toBe("allow");
+  });
+
   it("user external_directory values win over plugin defaults", () => {
     const config: any = {
       permission: {
         external_directory: {
           "/tmp/**": "deny", // user explicitly clamps scratch
           "~/.cache/**": "deny", // user explicitly clamps cache
+          "~/.glorious/opencode/**": "deny", // user clamps plan storage too
           "/custom/path/**": "allow",
         },
       },
@@ -43,6 +56,7 @@ describe("applyConfig — external_directory defaults", () => {
     // User's denies win over our allows
     expect(extDir["/tmp/**"]).toBe("deny");
     expect(extDir["~/.cache/**"]).toBe("deny");
+    expect(extDir["~/.glorious/opencode/**"]).toBe("deny");
     // Our defaults that the user didn't override still present
     expect(extDir["~/.glorious/worktrees/**"]).toBe("allow");
     expect(extDir["/private/tmp/**"]).toBe("allow");

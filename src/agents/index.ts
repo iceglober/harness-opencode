@@ -174,7 +174,18 @@ const ORCHESTRATOR_PERMISSIONS = {
 
 const PLAN_PERMISSIONS = {
   edit: "allow" as const,
-  bash: "deny" as const,
+  // Plan agent is read-only aside from writing under the plan dir — but
+  // it does need to RESOLVE the plan dir via the `plan-dir` CLI
+  // subcommand (returns an absolute path derived from the worktree's
+  // repo-folder key; see src/plan-paths.ts and src/cli.ts). The object-
+  // form denies bash broadly and re-allows only `bunx
+  // @glrs-dev/harness-opencode plan-dir[...]`. No other bash invocation
+  // is permitted, so the read-only-aside-from-plans invariant holds.
+  bash: {
+    "*": "deny",
+    "bunx @glrs-dev/harness-opencode plan-dir": "allow",
+    "bunx @glrs-dev/harness-opencode plan-dir *": "allow",
+  },
   webfetch: "allow" as const,
   ast_grep: "deny",
   tsc_check: "deny",
@@ -383,7 +394,7 @@ export function createAgents(): Record<string, AgentConfig> {
       permission: ORCHESTRATOR_PERMISSIONS as AgentConfig["permission"],
     }),
     plan: agentFromPrompt(planPrompt, {
-      description: "Interactive planner. Orchestrates gap analysis and adversarial review. Produces a written plan at .agent/plans/<slug>.md.",
+      description: "Interactive planner. Orchestrates gap analysis and adversarial review. Produces a written plan in the repo-shared plan directory (resolve via `bunx @glrs-dev/harness-opencode plan-dir`).",
       mode: "primary",
       model: "anthropic/claude-opus-4-7",
       temperature: 0.3,

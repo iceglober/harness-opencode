@@ -33,8 +33,8 @@ const PLUGIN_PATH = path.resolve(
 
 // --- Fixtures ---------------------------------------------------------------
 
-function mkTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "autopilot-test-"));
+function mkTmpDir(prefix = "autopilot-test-") {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
 function rmTmpDir(dir) {
@@ -146,6 +146,77 @@ test("findPlanPath: returns most recent plan path reference", async () => {
 test("findPlanPath: null when no path in messages", async () => {
   const { findPlanPath } = await import(PLUGIN_PATH);
   assert.equal(findPlanPath([userMsg("hi"), assistantMsg("hello")]), null);
+});
+
+// --- findPlanPath regex coverage ------------------------------------------
+//
+// The regex in src/plugins/autopilot.ts was broadened to match both the
+// legacy per-worktree `.agent/plans/<slug>.md` shape and the new absolute
+// repo-shared shape (`~/.glorious/opencode/<repo>/plans/<slug>.md` or any
+// `$GLORIOUS_PLAN_DIR` override). These tests lock in both branches plus
+// the negative case (non-plan paths that superficially look similar).
+
+function msgWithText(role, text) {
+    return { info: { role }, parts: [{ type: "text", text }] };
+}
+
+test("findPlanPath: legacy `.agent/plans/<slug>.md` reference", async () => {
+    const { findPlanPath } = await import(PLUGIN_PATH);
+    const messages = [msgWithText("user", "see .agent/plans/fix-bug.md for the plan")];
+    assert.equal(findPlanPath(messages), ".agent/plans/fix-bug.md");
+});
+
+test("findPlanPath: absolute repo-shared path is matched", async () => {
+    const { findPlanPath } = await import(PLUGIN_PATH);
+    const messages = [
+        msgWithText(
+            "user",
+            "plan is at /Users/alice/.glorious/opencode/my-repo/plans/fix-bug.md",
+        ),
+    ];
+    const match = findPlanPath(messages);
+    assert.ok(match, "expected a match");
+    assert.ok(
+        match.endsWith("/my-repo/plans/fix-bug.md"),
+        `expected path to end with /my-repo/plans/fix-bug.md, got ${match}`,
+    );
+});
+
+test("findPlanPath: env-override absolute path under a custom base", async () => {
+    const { findPlanPath } = await import(PLUGIN_PATH);
+    const messages = [
+        msgWithText(
+            "user",
+            "written to /opt/custom/plan-root/glorious-opencode/plans/migration.md",
+        ),
+    ];
+    const match = findPlanPath(messages);
+    assert.ok(match);
+    assert.ok(
+        match.endsWith("/glorious-opencode/plans/migration.md"),
+        `got ${match}`,
+    );
+});
+
+test("findPlanPath: returns null when no plan reference exists", async () => {
+    const { findPlanPath } = await import(PLUGIN_PATH);
+    const messages = [
+        msgWithText("user", "hello"),
+        msgWithText("assistant", "hi — no plan yet"),
+    ];
+    assert.equal(findPlanPath(messages), null);
+});
+
+test("findPlanPath: ignores superficially similar non-plan paths", async () => {
+    const { findPlanPath } = await import(PLUGIN_PATH);
+    // `plans/raw.md` without a repo-folder segment before it → NOT a match.
+    // `/tmp/plans/` (two slashes, no repo folder) → NOT a match.
+    // These would all be false positives for a too-loose regex.
+    const messages = [
+        msgWithText("assistant", "see plans/raw.md for details"),
+        msgWithText("assistant", "not `/plans/orphan.md`"),
+    ];
+    assert.equal(findPlanPath(messages), null);
 });
 
 // --- Activation gate --------------------------------------------------------
@@ -466,4 +537,160 @@ test("chat.message: non-target agent → no state write", async () => {
   } finally {
     rmTmpDir(tmp);
   }
+});
+
+// --- Absolute plan-path integration (repo-shared plan storage) -----------
+//
+// Plans now live at `~/.glorious/opencode/<repo>/plans/<slug>.md` rather
+// than in a per-worktree `.agent/plans/` dir. The plugin must handle this
+// shape end-to-end: `findPlanPath` matches the absolute form (a4), and the
+// runtime reader uses `path.isAbsolute` to decide whether to anchor against
+// the worktree dir or pass through as-is. These tests pin that flow down.
+
+test("session.idle: autopilot on absolute plan path → one nudge", async () => {
+    const { default: factory } = await import(PLUGIN_PATH);
+    const worktreeDir = mkTmpDir();
+    const planRootDir = mkTmpDir("autopilot-plan-root-");
+    try {
+      // Absolute plan path under a fake `~/.glorious/opencode/<repo>/plans/` layout.
+      const absPlanPath = path.join(
+        planRootDir,
+        "my-repo",
+        "plans",
+        "absolute-fix.md",
+      );
+      fs.mkdirSync(path.dirname(absPlanPath), { recursive: true });
+      fs.writeFileSync(
+        absPlanPath,
+        `# Fix absolute\n## Acceptance criteria\n${Array.from({ length: 6 }, (_, i) => `- [ ] step ${i}`).join("\n")}\n`,
+      );
+
+      const messages = [
+        userMsg(`/autopilot ENG-9999: fix per ${absPlanPath}`),
+        assistantMsg("starting"),
+      ];
+      const client = mockClientWithMessages(messages);
+      const handlers = await factory({ client, directory: worktreeDir });
+      await handlers.event({
+        event: { type: "session.idle", properties: { sessionID: "s1" } },
+      });
+
+      assert.equal(client.prompts.length, 1, "should nudge exactly once");
+      assert.match(
+        client.prompts[0].text,
+        /\[autopilot\] Session idled with unchecked acceptance criteria/,
+        "plugin should have read the absolute plan file and counted items",
+      );
+    } finally {
+      rmTmpDir(worktreeDir);
+      rmTmpDir(planRootDir);
+    }
+});
+
+test("findPlanPath prefers the most recent reference across mixed legacy+absolute messages", async () => {
+    // A session might contain both a legacy reference (early message) and
+    // a later absolute path (after plans migrated). findPlanPath scans
+    // newest-to-oldest and returns the first match — so the latest shape wins.
+    const { findPlanPath } = await import(PLUGIN_PATH);
+    const messages = [
+        msgWithText("user", "/autopilot see .agent/plans/legacy.md"),
+        msgWithText("assistant", "working"),
+        msgWithText(
+          "user",
+          "actually use /Users/me/.glorious/opencode/my-repo/plans/current.md instead",
+        ),
+    ];
+    const match = findPlanPath(messages);
+    assert.ok(match, "expected a match");
+    assert.ok(
+      match.endsWith("/plans/current.md"),
+      `expected the newest (absolute) reference to win, got ${match}`,
+    );
+});
+
+test("runtime reader uses path.isAbsolute: absolute plan path is read as-is", async () => {
+    // Regression: a naive `path.join(worktreeDir, planPath)` would CORRUPT
+    // the absolute path by concatenating the worktree dir in front of it.
+    // This test verifies that autopilot reads the plan from the actual
+    // absolute location (not `<worktree>/<absolute-path>`) by placing the
+    // fixture at the absolute path ONLY and checking the nudge fires.
+    const { default: factory } = await import(PLUGIN_PATH);
+    const worktreeDir = mkTmpDir();
+    const planRootDir = mkTmpDir("autopilot-plan-root-");
+    try {
+      const absPlanPath = path.join(
+        planRootDir,
+        "isolated-repo",
+        "plans",
+        "standalone.md",
+      );
+      fs.mkdirSync(path.dirname(absPlanPath), { recursive: true });
+      fs.writeFileSync(
+        absPlanPath,
+        "# Standalone\n## Acceptance criteria\n- [ ] only\n",
+      );
+
+      // NB: the plan fixture is ONLY at the absolute path — nothing is
+      // written inside `worktreeDir/.agent/plans/...`. If the plugin
+      // were using `path.join(worktreeDir, absPlanPath)` (the broken
+      // shape), it would try to read e.g.
+      // `/tmp/worktree/tmp/plan-root/isolated-repo/plans/standalone.md`,
+      // which does NOT exist — no nudge would fire.
+      const messages = [
+        userMsg(`/autopilot iso-1 per ${absPlanPath}`),
+        assistantMsg("go"),
+      ];
+      const client = mockClientWithMessages(messages);
+      const handlers = await factory({ client, directory: worktreeDir });
+      await handlers.event({
+        event: { type: "session.idle", properties: { sessionID: "s1" } },
+      });
+
+      assert.equal(
+        client.prompts.length,
+        1,
+        "plugin must have read the absolute plan file (path.isAbsolute branch)",
+      );
+      assert.match(client.prompts[0].text, /\[autopilot\] Session idled with unchecked acceptance criteria/);
+    } finally {
+      rmTmpDir(worktreeDir);
+      rmTmpDir(planRootDir);
+    }
+});
+
+test("session.idle: legacy .agent/plans/<slug>.md still triggers autopilot nudge (backward compat)", async () => {
+    // Regression guard: sessions that started before the plan-storage
+    // migration may still have `.agent/plans/<slug>.md` references
+    // lingering in their chat transcript. `findPlanPath` must continue
+    // to match this shape, and the runtime reader must anchor the
+    // relative path against the worktree directory (not pass through as
+    // absolute). This asserts the full end-to-end legacy path works.
+    const { default: factory } = await import(PLUGIN_PATH);
+    const dir = mkTmpDir();
+    try {
+      writeFixture(
+        dir,
+        ".agent/plans/legacy-slug.md",
+        "# Legacy\n## Acceptance criteria\n- [ ] one\n- [ ] two\n- [ ] three\n",
+      );
+      const messages = [
+        userMsg(
+          "/autopilot ENG-legacy: continue per .agent/plans/legacy-slug.md",
+        ),
+        assistantMsg("starting legacy flow"),
+      ];
+      const client = mockClientWithMessages(messages);
+      const handlers = await factory({ client, directory: dir });
+      await handlers.event({
+        event: { type: "session.idle", properties: { sessionID: "s1" } },
+      });
+      assert.equal(client.prompts.length, 1, "legacy path should still nudge");
+      assert.match(
+        client.prompts[0].text,
+        /\[autopilot\] Session idled with unchecked acceptance criteria/,
+        "plugin must have read the legacy plan file via path.join(worktreeDir, relativePath)",
+      );
+    } finally {
+      rmTmpDir(dir);
+    }
 });
