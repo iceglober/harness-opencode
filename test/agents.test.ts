@@ -8,8 +8,8 @@ import { applyConfig } from "../src/config-hook.js";
 describe("createAgents", () => {
   const agents = createAgents();
 
-  it("returns exactly 13 agents", () => {
-    expect(Object.keys(agents).length).toBe(13);
+  it("returns exactly 12 agents", () => {
+    expect(Object.keys(agents).length).toBe(12);
   });
 
   it("has the 3 primary agents with mode=primary", () => {
@@ -19,12 +19,11 @@ describe("createAgents", () => {
     }
   });
 
-  it("has the 10 subagents with mode=subagent", () => {
+  it("has the 9 subagents with mode=subagent", () => {
     const subagents = [
       "qa-reviewer",
       "qa-thorough",
       "plan-reviewer",
-      "autopilot-verifier",
       "code-searcher",
       "gap-analyzer",
       "architecture-advisor",
@@ -115,7 +114,6 @@ describe("subagent permissions", () => {
     "qa-reviewer",
     "qa-thorough",
     "plan-reviewer",
-    "autopilot-verifier",
     "code-searcher",
     "gap-analyzer",
     "architecture-advisor",
@@ -159,11 +157,6 @@ describe("subagent permissions", () => {
     expect(bash).toBe("allow");
   });
 
-  it("autopilot-verifier bash is plain \"allow\" string", () => {
-    const bash = (agents["autopilot-verifier"] as any).permission.bash;
-    expect(bash).toBe("allow");
-  });
-
   it("qa-thorough permission block matches qa-reviewer shape", () => {
     const qr = (agents["qa-reviewer"] as any).permission;
     const qt = (agents["qa-thorough"] as any).permission;
@@ -188,18 +181,6 @@ describe("subagent permissions", () => {
     // Bash is now a plain string; assert both are the same string value.
     expect(qt.bash).toBe(qr.bash);
     expect(qr.bash).toBe("allow");
-  });
-
-  it("autopilot-verifier permissions preserve frontmatter values", () => {
-    const perm = (agents["autopilot-verifier"] as any).permission;
-    expect(perm.edit).toBe("deny");
-    expect(perm.webfetch).toBe("deny");
-    expect(perm.question).toBe("deny");
-    expect(perm.memory).toBe("deny");
-    expect(perm.playwright).toBe("deny");
-    expect(perm.linear).toBe("deny");
-    expect(perm.serena).toBe("allow");
-    expect(perm.bash).toBe("allow");
   });
 
   it("src/agents/index.ts no longer contains NONDESTRUCTIVE_BASH_RULES", () => {
@@ -424,7 +405,7 @@ describe("applyConfig — permission.bash behavior", () => {
   //   2. Read-only subagents declaring `bash: "deny"` entirely
   //      (plan-reviewer, code-searcher, gap-analyzer, …).
   //   3. Reviewer system prompts that forbid destructive operations
-  //      by role (qa-reviewer, qa-thorough, autopilot-verifier).
+  //      by role (qa-reviewer, qa-thorough).
 
   it("applyConfig does NOT set a global permission.bash default", () => {
     const config: any = {};
