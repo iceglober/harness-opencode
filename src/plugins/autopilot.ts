@@ -1,16 +1,14 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import { execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { promisify } from "node:util";
 
 /**
- * Canonical Ralph loop, minimal. When the user invokes `/autopilot`, the
+ * Canonical Ralph loop, hardened. When the user invokes `/autopilot`, the
  * orchestrator runs its normal five-phase workflow on a plan. This plugin
  * nudges the session to keep going whenever opencode goes idle before the
  * plan's `## Acceptance criteria` boxes are all checked.
- *
- * No sentinels. No verifier. No shipped-probe. No stagnation detector. No
- * exit tokens. The plugin looks at the plan file on disk and at the first
- * user message; everything else is just the agent doing its job.
  *
  * Activation: the session's **first user message** must contain `/autopilot`
  * (as a slash-command token) or the literal `AUTOPILOT mode` phrase that
@@ -18,23 +16,55 @@ import * as path from "node:path";
  * sticky for the lifetime of the session; to re-activate in a fresh
  * session, the user invokes `/autopilot` again.
  *
- * Stop conditions:
- *   1. The plan file has zero unchecked `- [ ]` boxes under `## Acceptance
- *      criteria` → plugin silently stops nudging. Orchestrator's Phase 5
- *      handoff message is the terminal state; user runs `/ship` manually.
- *   2. The iteration counter reaches `MAX_ITERATIONS` → plugin emits one
- *      "stopped, something's stuck" nudge and then stops for this session.
- *   3. The user types anything → iterations reset to 0, loop continues.
+ * Circuit breakers (mechanical, non-interactive):
  *
- * State: `.agent/autopilot-state.json` stores per-session `{ enabled,
- * iterations, lastNudgeAt }`. That's it.
+ *   1. **Plan shape.** Only *unit plans* get nudged. Umbrella plans
+ *      (tracking multiple Linear issues or large roadmaps),
+ *      measurement-gated plans (7-day windows, post-deploy SLOs), and
+ *      opt-out plans (magic `<!-- autopilot: skip -->` comment) are
+ *      detected via `classifyPlan` and stop the session silently.
+ *   2. **Branch mismatch.** If the plan's `## Goal` references a Linear
+ *      ID that doesn't appear in the current branch name, the work
+ *      belongs elsewhere. Session stops silently.
+ *   3. **PR merged.** If the current branch has a merged PR (via
+ *      `gh pr view`), the work is already shipped. Session stops
+ *      silently. Graceful degrade when `gh` is unavailable.
+ *   4. **Kill switch.** A file at `.agent/autopilot-disable` stops ALL
+ *      sessions in this worktree. Deterministic, external, works from
+ *      any terminal.
+ *   5. **STOP backoff.** After two consecutive assistant messages matching
+ *      a STOP pattern (`^STOP[:.\\s—]`) on the same plan, the plugin
+ *      stops. The agent's STOP is authoritative; we don't nudge past it.
+ *   6. **Max iterations cap.** Hard ceiling at `MAX_ITERATIONS`. Fires one
+ *      "stopped, something's stuck" nudge (or silently stops if debounced)
+ *      and the session is terminally stopped either way.
+ *
+ * State: `.agent/autopilot-state.json` stores per-session
+ * `{ enabled, iterations, lastNudgeAt, stopped, stopReason,
+ *    consecutiveStops, prState, prCheckedAt, lastUncheckedCount }`.
+ *
+ * Important design rule: the plugin never asks the user anything.
+ * Circuit breakers are mechanical — a session that can't make progress
+ * stops silently. The orchestrator's Phase 5 handoff (or its STOP report)
+ * is the final output the user sees; the plugin respects that.
  */
 
 const STATE_PATH = ".agent/autopilot-state.json";
+const KILL_SWITCH_PATH = ".agent/autopilot-disable";
 const MAX_ITERATIONS = 20;
 const TARGET_AGENTS = new Set(["build", "orchestrator"]);
 const MESSAGE_LIMIT = 40;
 const NUDGE_DEBOUNCE_MS = 30_000;
+const PR_CACHE_MS = 5 * 60 * 1_000; // 5 minutes
+const MAX_CONSECUTIVE_STOPS = 2;
+
+/**
+ * Umbrella-plan detection thresholds. `UMBRELLA_MIN_BYTES` maps to the
+ * ~500-line rule from the proposal (500 lines * ~100 chars/line = 50KB).
+ * `UMBRELLA_MIN_LINEAR_IDS` is the "many distinct tickets" heuristic.
+ */
+const UMBRELLA_MIN_BYTES = 50_000;
+const UMBRELLA_MIN_LINEAR_IDS = 3;
 
 /**
  * Activation marker. Matches either `/autopilot` as a whole token (the
@@ -46,8 +76,45 @@ const NUDGE_DEBOUNCE_MS = 30_000;
  */
 const AUTOPILOT_MARKER_RE = /(^|\s)\/autopilot(\s|$)|AUTOPILOT mode/;
 
-// PLAN_PATH_RE is defined further down, next to findPlanPath where the
-// matching rules live.
+/**
+ * Magic-comment opt-out. Plan authors drop this anywhere in the plan file
+ * to tell autopilot "do not nudge this plan." Chosen as a comment rather
+ * than YAML frontmatter so plans without existing frontmatter don't need
+ * a schema migration.
+ */
+const OPT_OUT_RE = /<!--\s*autopilot:\s*(skip|false)\s*-->/i;
+
+/**
+ * Umbrella-plan structural signals. Presence of any `## Chunks`,
+ * `## Milestones`, or `## Workstreams` header strongly suggests the plan
+ * is tracking multiple units of work rather than a single ticket's ACs.
+ */
+const UMBRELLA_SECTION_RE = /^##\s+(Chunks|Milestones|Workstreams)\b/m;
+
+/**
+ * Linear-style ticket IDs (`PROJ-123`). Used two ways: count distinct IDs
+ * in the plan to detect umbrella shape, and extract the ID from the
+ * `## Goal` section to check branch/plan alignment.
+ */
+const LINEAR_ID_RE = /\b[A-Z]{2,10}-\d+\b/g;
+
+/**
+ * Measurement-gate phrases in `## Acceptance criteria`. An AC that says
+ * "success rate reaches 70% over a 7-day production window" cannot be
+ * ticked by the agent mid-session; nudging it is counterproductive.
+ *
+ * Scoped to the AC section only — "SLO" in the Constraints section is
+ * fine, for example.
+ */
+const MEASUREMENT_GATE_RE =
+  /\b(7-day|production window|post-deploy|post-launch|SLO|success rate reaches|after deploy|bake time)\b/i;
+
+/**
+ * STOP-report pattern from an assistant message. Anchored to line-start
+ * to avoid matching "I won't stop until done" prose. When this matches we
+ * consider the assistant to have escalated; two in a row → session stops.
+ */
+const STOP_REPORT_RE = /^STOP[:.\s—]/m;
 
 const NUDGE_TEXT =
   "[autopilot] Session idled with unchecked acceptance criteria. " +
@@ -60,6 +127,16 @@ const MAX_ITERATIONS_TEXT =
   "Either the work is complete or the loop is stuck. Review and resume " +
   "manually; a new `/autopilot` session will re-enable nudges.";
 
+type StopReason =
+  | "max-iterations"
+  | "plan-shape:umbrella"
+  | "plan-shape:measurement-gated"
+  | "plan-shape:opted-out"
+  | "branch-mismatch"
+  | "pr-merged"
+  | "kill-switch"
+  | "agent-stop-report";
+
 interface SessionState {
   enabled?: boolean;
   iterations: number;
@@ -67,6 +144,19 @@ interface SessionState {
   /** Once set, no further nudges fire for this session. Cleared only by
    * a brand-new session (i.e. never, within this session). */
   stopped?: boolean;
+  /** Why the session stopped — surfaced for debugging and future UI. */
+  stopReason?: StopReason | string;
+  /** Count of consecutive assistant STOP reports on the same plan. Resets
+   * when the unchecked-count decreases (agent made progress). */
+  consecutiveStops?: number;
+  /** Cached PR state ("MERGED", "OPEN", "none", or "unknown") for the
+   * current branch. Refreshed no more than once per `PR_CACHE_MS`. */
+  prState?: string;
+  /** Epoch ms when `prState` was last populated. */
+  prCheckedAt?: number;
+  /** Last observed unchecked-box count; used to detect progress between
+   * idles, which resets `consecutiveStops`. */
+  lastUncheckedCount?: number;
 }
 
 interface PluginState {
@@ -74,6 +164,8 @@ interface PluginState {
 }
 
 type RawMessage = { info: any; parts: Array<any> };
+
+type PlanShape = "unit" | "umbrella" | "measurement-gated" | "opted-out";
 
 // ---- state I/O ----
 
@@ -112,6 +204,23 @@ function latestUserAgent(messages: RawMessage[]): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Return the text of the most-recent assistant message, or `""` if none.
+ * Used by STOP-report detection.
+ */
+function latestAssistantText(messages: RawMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.info?.role !== "assistant") continue;
+    const parts = msg.parts ?? [];
+    return parts
+      .filter((p: any) => p.type === "text" && typeof p.text === "string")
+      .map((p: any) => p.text as string)
+      .join("\n");
+  }
+  return "";
 }
 
 /**
@@ -169,8 +278,126 @@ function findPlanPath(messages: RawMessage[]): string | null {
 function countUnchecked(planContent: string): number {
   const section = /## Acceptance criteria([\s\S]*?)(?=\n##|$)/.exec(planContent);
   if (!section) return 0;
+  // Only `- [ ]` counts. `- [x]` is done, `- [~]` is pending/measurement,
+  // `- [-]` is blocked/conditional — none of those are actionable by the
+  // agent in-session so they must not trigger nudges.
   const matches = section[1].match(/^- \[ \]/gm);
   return matches?.length ?? 0;
+}
+
+/**
+ * Classify a plan's shape from its content. This decides whether autopilot
+ * should nudge (unit) or stop silently (umbrella, measurement-gated,
+ * opted-out).
+ *
+ * Priority:
+ *   1. Explicit opt-out (`<!-- autopilot: skip -->`) — authoritative.
+ *   2. Umbrella signals (structural section headers, size, many Linear IDs).
+ *   3. Measurement-gated phrases scoped to the `## Acceptance criteria`
+ *      section only.
+ *   4. Otherwise: unit.
+ *
+ * We check umbrella before measurement-gated because an umbrella that
+ * happens to mention "post-deploy" is still primarily an umbrella problem
+ * (multi-chunk, multi-branch) — the right fix is a unit plan, not stricter
+ * marker hygiene.
+ */
+function classifyPlan(content: string): PlanShape {
+  if (OPT_OUT_RE.test(content)) return "opted-out";
+
+  if (UMBRELLA_SECTION_RE.test(content)) return "umbrella";
+  if (content.length > UMBRELLA_MIN_BYTES) return "umbrella";
+  const linearIds = content.match(LINEAR_ID_RE) ?? [];
+  const unique = new Set(linearIds);
+  if (unique.size >= UMBRELLA_MIN_LINEAR_IDS) return "umbrella";
+
+  const acSection = /## Acceptance criteria([\s\S]*?)(?=\n##|$)/.exec(content);
+  if (acSection && MEASUREMENT_GATE_RE.test(acSection[1])) {
+    return "measurement-gated";
+  }
+
+  return "unit";
+}
+
+/**
+ * Extract the first Linear-style ticket ID from the plan's `## Goal`
+ * section. Returns `null` if no `## Goal` or no ID within it. Used by
+ * branch/plan alignment — if the goal cites a ticket, the branch should
+ * too.
+ */
+function planGoalLinearId(content: string): string | null {
+  const goal = /## Goal([\s\S]*?)(?=\n##|$)/.exec(content);
+  if (!goal) return null;
+  const m = goal[1].match(LINEAR_ID_RE);
+  return m ? m[0] : null;
+}
+
+/**
+ * Return true when the assistant's most recent message reads as a STOP
+ * report — the agent telling us it can't proceed.
+ *
+ * Anchored to start-of-line + delimiter to avoid pattern-matching
+ * innocuous uses of the word STOP ("I won't stop until the tests pass").
+ */
+function detectStopReport(assistantText: string): boolean {
+  if (!assistantText) return false;
+  return STOP_REPORT_RE.test(assistantText);
+}
+
+// ---- external checks ----
+
+const execFile = promisify(execFileCb);
+
+/**
+ * Return the current branch name by shelling out to `git`. Graceful
+ * degrade: on any failure (not a git dir, git missing, detached HEAD),
+ * returns `null`. Never throws.
+ */
+async function currentBranch(dir: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFile(
+      "git",
+      ["-C", dir, "branch", "--show-current"],
+      { timeout: 2_000 },
+    );
+    const branch = stdout.trim();
+    return branch.length > 0 ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Return the PR state for the current branch ("MERGED", "OPEN", "CLOSED",
+ * etc.) via `gh pr view`. Returns `null` if `gh` isn't installed, there's
+ * no PR, or any other failure. Never throws.
+ */
+async function pullRequestState(dir: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFile(
+      "gh",
+      ["pr", "view", "--json", "state", "--jq", ".state"],
+      { cwd: dir, timeout: 5_000 },
+    );
+    const state = stdout.trim();
+    return state.length > 0 ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Return true iff `.agent/autopilot-disable` exists in the worktree. Any
+ * read error (not existing, permission issues, etc.) is treated as
+ * "kill switch not engaged."
+ */
+async function killSwitchEngaged(dir: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(dir, KILL_SWITCH_PATH));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---- nudge dispatch ----
@@ -229,15 +456,29 @@ const plugin: Plugin = async ({ client, directory }) => {
         sessState.enabled = true;
       }
 
-      // Max-iterations cap.
+      // Kill-switch: cheapest external signal, check first. A file on
+      // disk is the user's (or the agent's) unambiguous way to stop the
+      // loop without relying on chat-message heuristics.
+      if (await killSwitchEngaged(directory)) {
+        state.sessions[sessionID] = {
+          ...sessState,
+          stopped: true,
+          stopReason: "kill-switch",
+        };
+        await writeState(directory, state);
+        return;
+      }
+
+      // Max-iterations cap. Set `stopped` unconditionally — if sendNudge
+      // gets debounced the cap must still terminate the session, not
+      // leave it re-testable on the next idle cycle.
       if (sessState.iterations >= MAX_ITERATIONS) {
-        const sent = await sendNudge(
-          client,
-          sessionID,
-          sessState,
-          MAX_ITERATIONS_TEXT,
-        );
-        state.sessions[sessionID] = { ...sessState, stopped: sent };
+        await sendNudge(client, sessionID, sessState, MAX_ITERATIONS_TEXT);
+        state.sessions[sessionID] = {
+          ...sessState,
+          stopped: true,
+          stopReason: "max-iterations",
+        };
         await writeState(directory, state);
         return;
       }
@@ -267,12 +508,105 @@ const plugin: Plugin = async ({ client, directory }) => {
         return;
       }
 
+      // Plan-shape classifier. Non-unit plans (umbrella, measurement,
+      // opt-out) stop the session silently — nudging against an
+      // un-tickable AC is what wedged us in the transcript that motivated
+      // this whole set of circuit breakers.
+      const shape = classifyPlan(planContent);
+      if (shape !== "unit") {
+        state.sessions[sessionID] = {
+          ...sessState,
+          stopped: true,
+          stopReason: `plan-shape:${shape}`,
+        };
+        await writeState(directory, state);
+        return;
+      }
+
+      // Branch/plan alignment. If the plan's Goal cites a Linear ID and
+      // the current branch doesn't contain it, we're on the wrong
+      // branch — stop rather than churn.
+      const planLinearId = planGoalLinearId(planContent);
+      if (planLinearId) {
+        const branch = await currentBranch(directory);
+        if (branch && !branch.toLowerCase().includes(planLinearId.toLowerCase())) {
+          state.sessions[sessionID] = {
+            ...sessState,
+            stopped: true,
+            stopReason: "branch-mismatch",
+          };
+          await writeState(directory, state);
+          return;
+        }
+      }
+
+      // PR-state short-circuit. If the current branch has a merged PR,
+      // the work is shipped regardless of local checkbox state. Cache
+      // the answer for PR_CACHE_MS to avoid shelling out on every idle.
+      const now = Date.now();
+      let prState = sessState.prState;
+      const prExpired =
+        sessState.prCheckedAt === undefined ||
+        now - sessState.prCheckedAt > PR_CACHE_MS;
+      if (prExpired) {
+        const fetched = await pullRequestState(directory);
+        prState = fetched ?? "none";
+        sessState.prState = prState;
+        sessState.prCheckedAt = now;
+      }
+      if (prState === "MERGED") {
+        state.sessions[sessionID] = {
+          ...sessState,
+          stopped: true,
+          stopReason: "pr-merged",
+        };
+        await writeState(directory, state);
+        return;
+      }
+
       const unchecked = countUnchecked(planContent);
       if (unchecked === 0) {
-        // Work is done. Persist enabled state but don't nudge. If the
-        // user keeps the session alive and later marks boxes unchecked
-        // (unlikely), we'd resume — harmless.
-        state.sessions[sessionID] = { ...sessState };
+        // Work is done. Persist enabled state but don't nudge. Reset
+        // STOP counter / last count so a future un-tick wouldn't see
+        // stale counters.
+        state.sessions[sessionID] = {
+          ...sessState,
+          consecutiveStops: 0,
+          lastUncheckedCount: 0,
+        };
+        await writeState(directory, state);
+        return;
+      }
+
+      // STOP-report backoff. When the agent's most recent message reads
+      // as a STOP report, count it; after MAX_CONSECUTIVE_STOPS in a row
+      // the plugin stops. If the unchecked count dropped since last idle
+      // (agent made real progress), the counter resets.
+      const lastUnchecked = sessState.lastUncheckedCount;
+      const madeProgress =
+        lastUnchecked !== undefined && unchecked < lastUnchecked;
+      const stopReported = detectStopReport(latestAssistantText(messages));
+
+      let consecutiveStops = sessState.consecutiveStops ?? 0;
+      if (madeProgress) {
+        consecutiveStops = 0;
+      } else if (stopReported) {
+        consecutiveStops += 1;
+      } else {
+        // Assistant message wasn't a STOP — treat this idle as neutral
+        // (neither progress nor a STOP). Don't reset the counter,
+        // because two STOPs separated by a non-STOP idle still means
+        // the agent keeps declining to proceed.
+      }
+      sessState.consecutiveStops = consecutiveStops;
+      sessState.lastUncheckedCount = unchecked;
+
+      if (consecutiveStops >= MAX_CONSECUTIVE_STOPS) {
+        state.sessions[sessionID] = {
+          ...sessState,
+          stopped: true,
+          stopReason: "agent-stop-report",
+        };
         await writeState(directory, state);
         return;
       }
@@ -284,6 +618,12 @@ const plugin: Plugin = async ({ client, directory }) => {
           ...sessState,
           iterations: sessState.iterations + 1,
         };
+        await writeState(directory, state);
+      } else {
+        // Debounced — persist the updated counters (consecutiveStops,
+        // lastUncheckedCount, prState cache) so subsequent idles see
+        // the latest view.
+        state.sessions[sessionID] = { ...sessState };
         await writeState(directory, state);
       }
     },
@@ -312,7 +652,10 @@ export default plugin;
 // plugin consumer uses the default export.
 export {
   MAX_ITERATIONS,
+  MAX_CONSECUTIVE_STOPS,
   NUDGE_DEBOUNCE_MS,
+  PR_CACHE_MS,
+  KILL_SWITCH_PATH,
   TARGET_AGENTS,
   AUTOPILOT_MARKER_RE,
   NUDGE_TEXT,
@@ -320,6 +663,9 @@ export {
   detectActivation,
   findPlanPath,
   countUnchecked,
+  classifyPlan,
+  planGoalLinearId,
+  detectStopReport,
   sendNudge,
 };
-export type { SessionState, PluginState, RawMessage };
+export type { SessionState, PluginState, RawMessage, PlanShape, StopReason };

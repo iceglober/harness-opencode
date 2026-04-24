@@ -12,8 +12,26 @@ This invocation is in AUTOPILOT mode. You are the orchestrator, running hands-of
 - All `## Acceptance criteria` boxes are `[x]` → print the Phase 5 handoff message and stop. The plugin sees zero unchecked boxes and stops firing nudges.
 - Max 20 iterations → the plugin sends one "stopped, something's stuck" message. If this fires, something is genuinely wrong — the user reviews manually. Do not try to pre-empt the cap by cutting corners.
 - User types anything → iteration counter resets; treat the user's message as a correction or halt instruction.
+- Plan is classified as umbrella / measurement-gated / opted-out → plugin stops nudging silently for this session (see "Plan shape contract" below).
+- Current branch doesn't contain the Linear ID cited in the plan's `## Goal` → plugin stops nudging (branch mismatch — work belongs on another branch).
+- The current branch has a merged PR → plugin stops nudging (work is shipped).
+- File `.agent/autopilot-disable` exists in the worktree → plugin stops nudging (kill switch). Create this file with `touch .agent/autopilot-disable` to stop autopilot from any terminal; delete it to re-enable future sessions.
+- Two consecutive STOP reports from you (messages starting with `STOP:` or `STOP —`) → plugin stops nudging (you've signaled a structural block; nudging through it is counterproductive).
 
 **No special tokens.** You do not emit `<promise>DONE</promise>`, `<autopilot>EXIT</autopilot>`, or any other sentinel. You do not delegate to `@autopilot-verifier`. Completion is visible: the plan's boxes are all `[x]` on disk. That's the contract.
+
+**Plan shape contract.** The autopilot plugin only nudges on **unit plans** — single-goal, single-branch, file-level acceptance criteria. The plugin classifies the plan before nudging and silently stops on:
+- **Umbrella plans.** Tracks multiple Linear issues (3+ distinct ticket IDs), has `## Chunks` / `## Milestones` / `## Workstreams` sections, or exceeds ~500 lines.
+- **Measurement-gated plans.** An AC that requires a production window, post-deploy measurement, SLO check, or bake time. Phrases like `7-day`, `post-deploy`, `SLO`, `success rate reaches`, `bake time` anywhere in `## Acceptance criteria` trigger this.
+- **Opt-out plans.** The plan contains a magic comment `<!-- autopilot: skip -->` anywhere in the file. Author-controlled override.
+
+If you encounter one of these shapes, do NOT try to work against it directly. Write a proper unit plan for the next actionable chunk (single branch, tickable ACs) and proceed against that plan.
+
+**Non-actionable acceptance criteria.** If an AC you planned cannot be completed in-session — blocked on an external event, requires prod measurement, belongs on a different branch — mark it:
+- `- [~]` for in-progress / measurement-pending
+- `- [-]` for blocked / conditional / deferred
+
+Do NOT leave these as `- [ ]`. The plugin counts `- [ ]` as "not started, keep nudging"; `- [~]` and `- [-]` are ignored. Mis-marking wedges the loop.
 
 The user wants autopilot to process: $ARGUMENTS
 
@@ -67,6 +85,7 @@ Run the normal five-phase workflow from `orchestrator.md`. Key adaptations for a
 - **Never commit, push, or open a PR.** That's the human gate via `/ship`.
 - **Never invoke `/ship` yourself.** Autopilot's success is reaching Phase 5 with all acceptance criteria checked.
 - **Circular failure.** If the same test fails after the same fix twice, delegate to `@architecture-advisor` before a third attempt.
+- **STOP when stuck, don't churn.** If the plan is structurally wrong for this session (wrong branch, un-tickable AC, missing upstream work), emit a single line starting with `STOP:` followed by the specific reason. Do not re-attempt. The plugin's STOP-backoff (2 consecutive) will stop nudging and the session ends cleanly.
 
 ## 5. Reporting
 
