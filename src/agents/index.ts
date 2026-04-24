@@ -513,6 +513,36 @@ const AGENTS_MD_WRITER_PERMISSIONS = {
   linear: "deny",
 };
 
+// ---- Tier map ----
+
+export type ModelTier = "deep" | "mid" | "fast";
+
+/**
+ * Maps every agent name to its model tier. Used by the harness.models
+ * config resolution in src/config-hook.ts.
+ *
+ * - deep: expensive, high-capability models (opus-class)
+ * - mid:  balanced cost/capability (sonnet-class)
+ * - fast: cheap, low-latency (haiku-class)
+ *
+ * Adding an agent to createAgents() without adding it here will fail
+ * the AGENT_TIERS completeness test — that's intentional.
+ */
+export const AGENT_TIERS: Record<string, ModelTier> = {
+  orchestrator: "deep",
+  plan: "deep",
+  "qa-thorough": "deep",
+  "architecture-advisor": "deep",
+  "plan-reviewer": "deep",
+  "gap-analyzer": "deep",
+  build: "mid",
+  "qa-reviewer": "mid",
+  "docs-maintainer": "mid",
+  "lib-reader": "mid",
+  "agents-md-writer": "mid",
+  "code-searcher": "fast",
+};
+
 // ---- Public API ----
 
 export function createAgents(): Record<string, AgentConfig> {
