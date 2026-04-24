@@ -33,6 +33,10 @@ import {
   refreshPluginCache,
 } from "./auto-update.js";
 
+// Dotenv loader — injects .env / .env.local into process.env before MCP
+// config interpolation resolves {env:VAR} references.
+import { loadDotenv } from "./plugins/dotenv.js";
+
 // Sub-plugins (autopilot idle-nudge loop + OS notifications + cost tracking)
 import autopilotPlugin from "./plugins/autopilot.js";
 import notifyPlugin from "./plugins/notify.js";
@@ -138,6 +142,11 @@ async function checkForUpdate(client: any): Promise<void> {
 // ---- Plugin entry ----
 
 const plugin: Plugin = async (input) => {
+  // Load .env / .env.local into process.env before anything else —
+  // MCP config {env:VAR} interpolation reads process.env, so this must
+  // run before sub-plugins and before OpenCode resolves MCP server config.
+  loadDotenv(input.directory);
+
   // Fire update check in background (non-blocking)
   checkForUpdate(input.client).catch(() => {});
 
