@@ -18,7 +18,7 @@ const {
 // ---- helpers ---------------------------------------------------------------
 
 function makeConfig(overrides: any = {}) {
-  return resolveConfig({ harness: { toolHooks: overrides } } as any);
+  return resolveConfig({} as any, { toolHooks: overrides });
 }
 
 function defaultConfig() {

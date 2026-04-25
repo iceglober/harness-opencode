@@ -57,10 +57,11 @@ export function doctor(): void {
   if (fs.existsSync(configPath)) {
     try {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      const plugins: string[] = Array.isArray(config.plugin) ? config.plugin : [];
-      const hasPlugin = plugins.some(
-        (p) => p === PLUGIN_NAME || String(p).startsWith(`${PLUGIN_NAME}@`),
-      );
+      const plugins: unknown[] = Array.isArray(config.plugin) ? config.plugin : [];
+      const hasPlugin = plugins.some((p) => {
+        const name = typeof p === "string" ? p : Array.isArray(p) ? p[0] : null;
+        return name === PLUGIN_NAME || String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+      });
       if (hasPlugin) {
         ok(`"${PLUGIN_NAME}" present in opencode.json plugin array`);
       } else {

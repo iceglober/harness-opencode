@@ -143,6 +143,48 @@ describe("merge-config", () => {
     expect(actual.plugin[0]).toBe("opencode-hashline");
   });
 
+  it("plugin tuple form upgrades existing string entry to tuple", () => {
+    const input = {
+      "$schema": "https://opencode.ai/config.json",
+      plugin: ["@glrs-dev/harness-opencode"],
+    };
+    const dstPath = writeDst(input);
+
+    const srcWithTuple = {
+      ...SRC_JSON,
+      plugin: [["@glrs-dev/harness-opencode", { models: { deep: ["bedrock/opus"] } }]],
+    };
+
+    const result = mergeConfig(srcWithTuple, dstPath);
+    expect(result.changed).toBe(true);
+
+    const actual = JSON.parse(fs.readFileSync(dstPath, "utf8"));
+    // Plugin should be upgraded to tuple form
+    expect(Array.isArray(actual.plugin[0])).toBe(true);
+    expect(actual.plugin[0][0]).toBe("@glrs-dev/harness-opencode");
+    expect(actual.plugin[0][1].models.deep[0]).toBe("bedrock/opus");
+  });
+
+  it("plugin tuple form does not downgrade existing tuple", () => {
+    const input = {
+      "$schema": "https://opencode.ai/config.json",
+      plugin: [["@glrs-dev/harness-opencode", { models: { deep: ["user-model"] } }]],
+    };
+    const dstPath = writeDst(input);
+
+    const srcWithString = {
+      ...SRC_JSON,
+      plugin: ["@glrs-dev/harness-opencode"],
+    };
+
+    const result = mergeConfig(srcWithString, dstPath);
+
+    const actual = JSON.parse(fs.readFileSync(dstPath, "utf8"));
+    // Existing tuple preserved — src string does not downgrade
+    expect(Array.isArray(actual.plugin[0])).toBe(true);
+    expect(actual.plugin[0][1].models.deep[0]).toBe("user-model");
+  });
+
   it("dry-run: returns changed=true with bakPath='(dry-run)' but does not write", () => {
     const input = loadFixture("scenario-1-vanilla.input");
     const dstPath = writeDst(input);

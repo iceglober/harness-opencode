@@ -29,10 +29,10 @@
  * single `tool.execute.after` handler so only one hook registration is
  * needed.
  *
- * Configuration (via `harness.toolHooks` in opencode.json):
+ * Configuration (via plugin options in opencode.json):
  *
- *   harness: {
- *     toolHooks: {
+ *   "plugin": [["@glrs-dev/harness-opencode", {
+ *     "toolHooks": {
  *       backpressure: {
  *         enabled: true,        // default
  *         threshold: 2000,      // chars — outputs above this get truncated
@@ -55,7 +55,7 @@
  *   }
  */
 
-import type { Plugin, Config } from "@opencode-ai/plugin";
+import type { Plugin, Config, PluginOptions } from "@opencode-ai/plugin";
 import type { OpencodeClient } from "@opencode-ai/sdk";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -140,8 +140,10 @@ interface ToolHooksConfig {
   };
 }
 
-function resolveConfig(config: Config): ToolHooksConfig {
-  const raw = (config as any).harness?.toolHooks ?? {};
+function resolveConfig(config: Config, pluginOptions?: PluginOptions): ToolHooksConfig {
+  // Prefer plugin options; fall back to legacy top-level harness key.
+  const raw = (pluginOptions?.toolHooks ??
+    (config as any).harness?.toolHooks ?? {}) as Record<string, any>;
   const bp = raw.backpressure ?? {};
   const vl = raw.verifyLoop ?? {};
   const ld = raw.loopDetection ?? {};
@@ -398,18 +400,20 @@ function checkReadDedup(
 // ---- Plugin entry ---------------------------------------------------------
 
 let pluginConfig: ToolHooksConfig | null = null;
+let storedPluginOptions: PluginOptions | undefined;
 
-const plugin: Plugin = async ({ client }) => {
+const plugin: Plugin = async ({ client }, options) => {
+  storedPluginOptions = options;
   return {
     config: async (config: Config) => {
-      pluginConfig = resolveConfig(config);
+      pluginConfig = resolveConfig(config, storedPluginOptions);
     },
 
     "tool.execute.after": async (input, output) => {
       // Config may not yet be resolved on the very first tool call
       // (race between config hook and first tool execution). Use
       // defaults if so.
-      const cfg = pluginConfig ?? resolveConfig({} as Config);
+      const cfg = pluginConfig ?? resolveConfig({} as Config, storedPluginOptions);
       const sess = getSession(input.sessionID);
 
       const toolName = input.tool;

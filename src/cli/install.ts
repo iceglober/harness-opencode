@@ -94,6 +94,30 @@ const MCP_TOGGLES: McpToggle[] = [
 // --- Helpers ---------------------------------------------------------------
 
 /**
+ * Extract plugin options from the tuple form in the plugin array.
+ * Supports: `["@glrs-dev/harness-opencode", { ... }]`
+ * Returns the options object, or null if not found/not tuple form.
+ */
+function extractPluginOptions(
+  config: Record<string, any> | null,
+): Record<string, any> | null {
+  if (!config) return null;
+  const plugins = config.plugin;
+  if (!Array.isArray(plugins)) return null;
+
+  for (const entry of plugins) {
+    if (
+      Array.isArray(entry) &&
+      entry.length >= 2 &&
+      (entry[0] === PLUGIN_NAME || String(entry[0]).startsWith(`${PLUGIN_NAME}@`))
+    ) {
+      return entry[1] as Record<string, any>;
+    }
+  }
+  return null;
+}
+
+/**
  * Read the plugin's version from its package.json.
  */
 function readPackageVersion(): string {
@@ -165,11 +189,14 @@ function readExistingConfig(configPath: string): Record<string, any> | null {
 }
 
 /**
- * Detect the current model provider from an existing config's
- * `harness.models` block, if any. Returns a human-readable label.
+ * Detect the current model provider from an existing config's plugin
+ * options (tuple form) or legacy `harness.models` block.
+ * Returns a human-readable label.
  */
 function detectModelProvider(existing: Record<string, any> | null): string | null {
-  const models = existing?.harness?.models;
+  // Check tuple form first: ["@glrs-dev/harness-opencode", { models: {...} }]
+  const opts = extractPluginOptions(existing);
+  const models = opts?.models ?? existing?.harness?.models;
   if (!models) return null;
 
   const deep = Array.isArray(models.deep) ? models.deep[0] : models.deep;
@@ -199,6 +226,58 @@ function detectEnabledMcps(existing: Record<string, any> | null): Set<string> {
 
 // --- Install logic ---------------------------------------------------------
 
+/**
+ * Migrate the legacy `harness` top-level key in opencode.json into the
+ * plugin options tuple. Reads the file, checks for a `harness` key,
+ * moves its contents into the plugin entry's options, and removes the
+ * top-level key. Writes a backup before mutating.
+ *
+ * No-op if:
+ *   - The file doesn't exist or isn't valid JSON
+ *   - There is no `harness` key
+ *   - The plugin isn't in the plugin array
+ */
+function migrateHarnessKeyToPluginOptions(configPath: string): void {
+  try {
+    if (!fs.existsSync(configPath)) return;
+    const raw = fs.readFileSync(configPath, "utf8");
+    const config = JSON.parse(raw);
+    if (!config.harness || typeof config.harness !== "object") return;
+
+    const plugins: any[] = Array.isArray(config.plugin) ? config.plugin : [];
+    const pluginIdx = plugins.findIndex((entry: any) => {
+      const name = typeof entry === "string" ? entry : Array.isArray(entry) ? entry[0] : null;
+      return name === PLUGIN_NAME || String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+    });
+    if (pluginIdx < 0) return;
+
+    // Extract the current plugin entry and merge harness config into options.
+    const current = plugins[pluginIdx];
+    const existingName = typeof current === "string"
+      ? current
+      : Array.isArray(current) ? current[0] : PLUGIN_NAME;
+    const existingOpts = Array.isArray(current) && current.length >= 2
+      ? (current[1] as Record<string, unknown>)
+      : {};
+
+    // Merge: harness.models → options.models (existing options win on conflict)
+    const merged: Record<string, unknown> = { ...config.harness, ...existingOpts };
+    plugins[pluginIdx] = [existingName, merged];
+
+    // Remove the legacy key.
+    delete config.harness;
+
+    // Write backup + new config.
+    const bakPath = `${configPath}.bak.${Date.now()}-${process.pid}`;
+    fs.copyFileSync(configPath, bakPath);
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    ok("Migrated legacy `harness` config into plugin options");
+    info(`Backup: ${bakPath}`);
+  } catch {
+    // Migration is best-effort. If it fails, the user can fix manually.
+  }
+}
+
 export interface InstallOptions {
   dryRun?: boolean;
   pin?: boolean;
@@ -215,12 +294,16 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
   const existing = readExistingConfig(configPath);
   const hasPlugin = existing
     ? (Array.isArray(existing.plugin) ? existing.plugin : []).some(
-        (p: string) => p === PLUGIN_NAME || String(p).startsWith(`${PLUGIN_NAME}@`),
+        (p: any) => {
+          const name = typeof p === "string" ? p : Array.isArray(p) ? p[0] : null;
+          return name === PLUGIN_NAME || String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+        },
       )
     : false;
   const existingProvider = detectModelProvider(existing);
   const existingMcps = detectEnabledMcps(existing);
-  const hasModels = !!existing?.harness?.models;
+  const existingOpts = extractPluginOptions(existing);
+  const hasModels = !!(existingOpts?.models ?? existing?.harness?.models);
 
   console.log(`\n${c.bold}${c.blue}@glrs-dev/harness-opencode${c.reset} setup\n`);
 
@@ -247,10 +330,9 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
   }
 
   // Build the config to merge — always include the plugin entry.
-  const config: Record<string, unknown> = {
-    $schema: "https://opencode.ai/config.json",
-    plugin: [pluginEntry],
-  };
+  // Plugin options (models, etc.) go into the tuple form:
+  //   plugin: [["@glrs-dev/harness-opencode", { models: {...} }]]
+  const pluginOpts: Record<string, unknown> = {};
 
   // Model provider — only prompt if not already configured.
   if (interactive && !hasModels) {
@@ -265,12 +347,10 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
 
     if (choice < MODEL_PRESETS.length) {
       const preset = MODEL_PRESETS[choice]!;
-      (config as any).harness = {
-        models: {
-          deep: [preset.deep],
-          mid: [preset.mid],
-          fast: [preset.fast],
-        },
+      pluginOpts.models = {
+        deep: [preset.deep],
+        mid: [preset.mid],
+        fast: [preset.fast],
       };
       ok(`Models: ${preset.label}`);
     } else {
@@ -278,6 +358,16 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
     }
     console.log();
   }
+
+  // Build the plugin entry — tuple form if options exist, plain string otherwise.
+  const pluginValue = Object.keys(pluginOpts).length > 0
+    ? [pluginEntry, pluginOpts]
+    : pluginEntry;
+
+  const config: Record<string, unknown> = {
+    $schema: "https://opencode.ai/config.json",
+    plugin: [pluginValue],
+  };
 
   // Optional MCPs — only prompt for ones not already configured.
   if (interactive) {
@@ -339,6 +429,14 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
       console.error(`\x1b[31m✗\x1b[0m ${e.message}`);
       process.exit(1);
     }
+  }
+
+  // Migrate legacy `harness` top-level key → plugin options tuple.
+  // OpenCode's config schema rejects unrecognized top-level keys, so
+  // the old `harness` key must be removed. We move its contents into
+  // the plugin tuple: ["@glrs-dev/harness-opencode", { models: {...} }].
+  if (!dryRun) {
+    migrateHarnessKeyToPluginOptions(configPath);
   }
 
   // Ensure the OpenCode plugin cache is up to date. The cache can get

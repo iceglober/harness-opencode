@@ -64,6 +64,24 @@ function fmtPath(parts: string[]): string {
     }, "");
 }
 
+/**
+ * Extract the plugin name from a plugin array entry.
+ * Handles both string (`"pkg"`, `"pkg@version"`) and tuple (`["pkg", { ... }]`) forms.
+ */
+function pluginName(entry: JsonValue): string | null {
+  if (typeof entry === "string") {
+    // "pkg" or "pkg@version" → "pkg"
+    const atIdx = entry.indexOf("@", 1); // skip leading @
+    return atIdx > 0 ? entry.slice(0, atIdx) : entry;
+  }
+  if (Array.isArray(entry) && typeof entry[0] === "string") {
+    const name = entry[0];
+    const atIdx = name.indexOf("@", 1);
+    return atIdx > 0 ? name.slice(0, atIdx) : name;
+  }
+  return null;
+}
+
 function mergeWalk(
   src: Record<string, JsonValue>,
   dst: Record<string, JsonValue>,
@@ -106,13 +124,40 @@ function mergeWalk(
       const joined = newPath.join(".");
       if (UNION_ALLOWLIST.has(joined)) {
         for (const item of sv) {
-          const needle = JSON.stringify(item);
-          const alreadyPresent = (dv as JsonValue[]).some(
-            (x) => JSON.stringify(x) === needle,
-          );
-          if (!alreadyPresent) {
-            (dv as JsonValue[]).push(deepClone(item));
-            additions.push(`appended: ${pathStr}[${JSON.stringify(item)}]`);
+          const srcName = pluginName(item);
+          if (srcName) {
+            // Plugin array: dedup by plugin name, not full JSON.
+            // If dst has a matching entry (same plugin name), replace it
+            // with the src entry (which may be a richer tuple form).
+            const dstIdx = (dv as JsonValue[]).findIndex(
+              (x) => pluginName(x) === srcName,
+            );
+            if (dstIdx >= 0) {
+              // Same plugin name exists. Only upgrade if the src entry
+              // is a tuple (has options) and the dst entry is a plain
+              // string — i.e. we're adding options to an existing entry.
+              const srcIsTuple = Array.isArray(item) && item.length >= 2;
+              const dstIsTuple = Array.isArray((dv as JsonValue[])[dstIdx]) &&
+                ((dv as JsonValue[])[dstIdx] as JsonValue[]).length >= 2;
+              if (srcIsTuple && !dstIsTuple) {
+                (dv as JsonValue[])[dstIdx] = deepClone(item);
+                additions.push(`upgraded: ${pathStr}[${JSON.stringify(srcName)}] to tuple form`);
+              }
+              // else: dst already has this plugin (possibly with its own options) — preserve.
+            } else {
+              (dv as JsonValue[]).push(deepClone(item));
+              additions.push(`appended: ${pathStr}[${JSON.stringify(item)}]`);
+            }
+          } else {
+            // Non-plugin value: fall back to JSON.stringify comparison.
+            const needle = JSON.stringify(item);
+            const alreadyPresent = (dv as JsonValue[]).some(
+              (x) => JSON.stringify(x) === needle,
+            );
+            if (!alreadyPresent) {
+              (dv as JsonValue[]).push(deepClone(item));
+              additions.push(`appended: ${pathStr}[${JSON.stringify(item)}]`);
+            }
           }
         }
       }

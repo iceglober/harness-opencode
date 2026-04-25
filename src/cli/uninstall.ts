@@ -60,14 +60,13 @@ export function uninstall(opts: UninstallOptions = {}): void {
     process.exit(1);
   }
 
-  const plugins: string[] = Array.isArray(config.plugin) ? config.plugin : [];
+  const plugins: unknown[] = Array.isArray(config.plugin) ? config.plugin : [];
 
-  // Find all entries that match our plugin name (bare or with version)
-  const filtered = plugins.filter(
-    (p) =>
-      p !== PLUGIN_NAME &&
-      !String(p).startsWith(`${PLUGIN_NAME}@`),
-  );
+  // Find all entries that match our plugin name (bare, versioned, or tuple)
+  const filtered = plugins.filter((p) => {
+    const name = typeof p === "string" ? p : Array.isArray(p) ? p[0] : null;
+    return name !== PLUGIN_NAME && !String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+  });
 
   if (filtered.length === plugins.length) {
     warn(`"${PLUGIN_NAME}" not found in plugin array — nothing to remove`);

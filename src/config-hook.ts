@@ -24,7 +24,7 @@
  * sees it. Regression test: `test/plugin-entry-single-default-export.test.ts`.
  */
 
-import type { Config } from "@opencode-ai/plugin";
+import type { Config, PluginOptions } from "@opencode-ai/plugin";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -88,11 +88,18 @@ export function writePermDebugSnapshot(config: Config): void {
 }
 
 /**
- * Resolve `harness.models` tier/per-agent overrides onto an agent map.
+ * Resolve `models` tier/per-agent overrides onto an agent map.
+ *
+ * Model config is read from plugin options (the second element of the
+ * `["@glrs-dev/harness-opencode", { models: {...} }]` tuple in
+ * opencode.json). Falls back to the legacy `config.harness.models`
+ * top-level key for backward compatibility (that key is now rejected
+ * by OpenCode's schema, but a user on an older OpenCode version may
+ * still have it).
  *
  * Precedence (first match wins):
- *   1. `harness.models.<agent-name>` — per-agent override
- *   2. `harness.models.<tier>`       — tier-level override
+ *   1. `options.models.<agent-name>` — per-agent override
+ *   2. `options.models.<tier>`       — tier-level override
  *   3. (no change)                   — plugin default from createAgents()
  *
  * Values may be a single string or an array of strings (fallback chain).
@@ -104,8 +111,11 @@ export function writePermDebugSnapshot(config: Config): void {
 export function resolveHarnessModels(
   agents: Record<string, AgentConfig>,
   config: Config,
+  pluginOptions?: PluginOptions,
 ): Record<string, AgentConfig> {
-  const modelsConfig = (config as any).harness?.models as
+  // Prefer plugin options; fall back to legacy top-level harness key.
+  const modelsConfig = (pluginOptions?.models ??
+    (config as any).harness?.models) as
     | Record<string, string | string[]>
     | undefined;
   if (!modelsConfig) return agents;
@@ -132,12 +142,12 @@ export function resolveHarnessModels(
   return agents;
 }
 
-export function applyConfig(config: Config): void {
-  // Agents: build from prompts, apply harness.models overrides, then
-  // user-wins spread (user's opencode.json agent overrides take final
+export function applyConfig(config: Config, pluginOptions?: PluginOptions): void {
+  // Agents: build from prompts, apply model overrides from plugin options,
+  // then user-wins spread (user's opencode.json agent overrides take final
   // precedence).
   const ourAgents = createAgents();
-  resolveHarnessModels(ourAgents, config);
+  resolveHarnessModels(ourAgents, config, pluginOptions);
   (config as any).agent = { ...ourAgents, ...((config as any).agent ?? {}) };
 
   // Commands: user-wins

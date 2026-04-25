@@ -55,6 +55,7 @@
     "url": "git+https://github.com/iceglober/harness-opencode.git"
   },
   "dependencies": {
+    "@inquirer/prompts": "^8.4.2",
     "cmd-ts": "^0.15.0",
     "picomatch": "^4.0.4",
     "ulid": "^3.0.2",

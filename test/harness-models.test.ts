@@ -63,17 +63,16 @@ describe("resolveHarnessModels", () => {
 
   it("tier resolution: deep/mid/fast arrays set correct models", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          deep: ["deep-model-1", "deep-model-2"],
-          mid: ["mid-model-1"],
-          fast: ["fast-model-1"],
-        },
+    const config = {} as any;
+    const pluginOptions = {
+      models: {
+        deep: ["deep-model-1", "deep-model-2"],
+        mid: ["mid-model-1"],
+        fast: ["fast-model-1"],
       },
-    } as any;
+    };
 
-    resolveHarnessModels(agents as any, config);
+    resolveHarnessModels(agents as any, config, pluginOptions);
 
     // Deep tier agents
     for (const name of [
@@ -104,16 +103,15 @@ describe("resolveHarnessModels", () => {
 
   it("per-agent override wins over tier", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          deep: ["tier-model"],
-          prime: ["agent-model"],
-        },
+    const config = {} as any;
+    const pluginOptions = {
+      models: {
+        deep: ["tier-model"],
+        prime: ["agent-model"],
       },
-    } as any;
+    };
 
-    resolveHarnessModels(agents as any, config);
+    resolveHarnessModels(agents as any, config, pluginOptions);
 
     expect(agents["prime"]!.model).toBe("agent-model");
     // Other deep agents still get tier model
@@ -122,15 +120,11 @@ describe("resolveHarnessModels", () => {
 
   it("single string values are normalized (not arrays)", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          deep: "single-string-model",
-        },
-      },
-    } as any;
+    const pluginOptions = {
+      models: { deep: "single-string-model" },
+    };
 
-    resolveHarnessModels(agents as any, config);
+    resolveHarnessModels(agents as any, {} as any, pluginOptions);
 
     expect(agents["prime"]!.model).toBe("single-string-model");
     expect(agents["plan"]!.model).toBe("single-string-model");
@@ -138,56 +132,52 @@ describe("resolveHarnessModels", () => {
 
   it("single string per-agent override works", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          prime: "direct-string",
-        },
-      },
-    } as any;
+    const pluginOptions = {
+      models: { prime: "direct-string" },
+    };
 
-    resolveHarnessModels(agents as any, config);
+    resolveHarnessModels(agents as any, {} as any, pluginOptions);
 
     expect(agents["prime"]!.model).toBe("direct-string");
   });
 
-  it("no harness config: all agents keep defaults", () => {
+  it("no plugin options and no legacy config: all agents keep defaults", () => {
     const agents = makeAgents();
-    const config = {} as any;
-
-    resolveHarnessModels(agents as any, config);
-
+    resolveHarnessModels(agents as any, {} as any);
     for (const name of Object.keys(agents)) {
       expect(agents[name]!.model).toBe(`default-${name}`);
     }
   });
 
-  it("empty harness.models: all agents keep defaults", () => {
+  it("empty models in plugin options: all agents keep defaults", () => {
     const agents = makeAgents();
-    const config = { harness: { models: {} } } as any;
-
-    resolveHarnessModels(agents as any, config);
-
+    resolveHarnessModels(agents as any, {} as any, { models: {} });
     for (const name of Object.keys(agents)) {
       expect(agents[name]!.model).toBe(`default-${name}`);
     }
   });
 
-  it("unknown agent names in harness.models are silently ignored", () => {
+  it("legacy harness.models still works as fallback", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          nonexistent: ["whatever"],
-          "also-fake": "nope",
-        },
-      },
-    } as any;
+    const config = { harness: { models: { deep: "legacy-model" } } } as any;
+    resolveHarnessModels(agents as any, config);
+    expect(agents["prime"]!.model).toBe("legacy-model");
+  });
 
-    // Should not throw
-    expect(() => resolveHarnessModels(agents as any, config)).not.toThrow();
+  it("plugin options win over legacy harness.models", () => {
+    const agents = makeAgents();
+    const config = { harness: { models: { deep: "legacy" } } } as any;
+    resolveHarnessModels(agents as any, config, { models: { deep: "new" } });
+    expect(agents["prime"]!.model).toBe("new");
+  });
 
-    // All agents unchanged
+  it("unknown agent names in plugin options are silently ignored", () => {
+    const agents = makeAgents();
+    const pluginOptions = {
+      models: { nonexistent: ["whatever"], "also-fake": "nope" },
+    };
+
+    expect(() => resolveHarnessModels(agents as any, {} as any, pluginOptions)).not.toThrow();
     for (const name of Object.keys(agents)) {
       expect(agents[name]!.model).toBe(`default-${name}`);
     }
@@ -195,16 +185,9 @@ describe("resolveHarnessModels", () => {
 
   it("partial tier config: only specified tiers are overridden", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          deep: ["deep-override"],
-          // mid and fast not specified
-        },
-      },
-    } as any;
+    const pluginOptions = { models: { deep: ["deep-override"] } };
 
-    resolveHarnessModels(agents as any, config);
+    resolveHarnessModels(agents as any, {} as any, pluginOptions);
 
     // Deep agents overridden
     expect(agents["prime"]!.model).toBe("deep-override");
@@ -216,28 +199,19 @@ describe("resolveHarnessModels", () => {
 
   it("uses first element of array (v1 behavior)", () => {
     const agents = makeAgents();
-    const config = {
-      harness: {
-        models: {
-          deep: ["primary-model", "fallback-1", "fallback-2"],
-        },
-      },
-    } as any;
+    const pluginOptions = {
+      models: { deep: ["primary-model", "fallback-1", "fallback-2"] },
+    };
 
-    resolveHarnessModels(agents as any, config);
+    resolveHarnessModels(agents as any, {} as any, pluginOptions);
 
     expect(agents["prime"]!.model).toBe("primary-model");
   });
 });
 
-describe("applyConfig — harness.models integration", () => {
+describe("applyConfig — plugin options integration", () => {
   it("user-wins: agent.prime.model in config wins over tier resolution", () => {
     const config: any = {
-      harness: {
-        models: {
-          deep: ["tier-model"],
-        },
-      },
       agent: {
         prime: {
           model: "user-direct-model",
@@ -246,8 +220,9 @@ describe("applyConfig — harness.models integration", () => {
         },
       },
     };
+    const pluginOptions = { models: { deep: ["tier-model"] } };
 
-    applyConfig(config);
+    applyConfig(config, pluginOptions);
 
     // User's direct agent override wins (applied AFTER tier resolution
     // via the user-wins spread).
@@ -255,15 +230,10 @@ describe("applyConfig — harness.models integration", () => {
   });
 
   it("tier resolution applies when no user agent override exists", () => {
-    const config: any = {
-      harness: {
-        models: {
-          deep: ["bedrock/claude-opus-4"],
-        },
-      },
-    };
+    const config: any = {};
+    const pluginOptions = { models: { deep: ["bedrock/claude-opus-4"] } };
 
-    applyConfig(config);
+    applyConfig(config, pluginOptions);
 
     expect(config.agent.prime.model).toBe("bedrock/claude-opus-4");
     expect(config.agent.plan.model).toBe("bedrock/claude-opus-4");
@@ -271,7 +241,7 @@ describe("applyConfig — harness.models integration", () => {
     expect(config.agent.build.model).toBe("anthropic/claude-sonnet-4-6");
   });
 
-  it("no harness config: plugin defaults preserved through applyConfig", () => {
+  it("no plugin options: plugin defaults preserved through applyConfig", () => {
     const config: any = {};
 
     applyConfig(config);

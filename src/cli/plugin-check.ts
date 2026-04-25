@@ -11,7 +11,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import * as readline from "node:readline";
+import { select, checkbox, confirm } from "@inquirer/prompts";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
 
@@ -32,120 +32,74 @@ export function isPluginInstalled(): boolean {
 
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    const plugins: string[] = Array.isArray(config.plugin) ? config.plugin : [];
-    return plugins.some(
-      (p) => p === PLUGIN_NAME || String(p).startsWith(`${PLUGIN_NAME}@`),
-    );
+    const plugins: unknown[] = Array.isArray(config.plugin) ? config.plugin : [];
+    return plugins.some((p) => {
+      const name = typeof p === "string" ? p : Array.isArray(p) ? p[0] : null;
+      return name === PLUGIN_NAME || String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+    });
   } catch {
     return false;
   }
 }
 
 /**
- * Interactive prompt: ask the user a yes/no question on stdin/stdout.
- * Returns true for "y"/"yes" (case-insensitive), false otherwise.
+ * Interactive prompt: ask the user a yes/no question.
+ * Returns true for "yes", false otherwise.
  * Non-interactive terminals (no TTY) return `false` immediately.
  */
-export function promptYesNo(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return Promise.resolve(false);
+export async function promptYesNo(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stderr, // prompts go to stderr so stdout stays clean for piping
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`${question} [y/N] `, (answer) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
+  return confirm({ message: question, default: false });
 }
 
 /**
- * Interactive prompt: present numbered choices, return the selected index.
- * Returns `defaultIndex` for non-TTY or empty input.
+ * Interactive prompt: present choices with arrow-key selection, return the
+ * selected index. Returns `defaultIndex` for non-TTY.
  */
-export function promptChoice(
+export async function promptChoice(
   question: string,
   choices: string[],
   defaultIndex = 0,
 ): Promise<number> {
-  if (!process.stdin.isTTY) return Promise.resolve(defaultIndex);
+  if (!process.stdin.isTTY) return defaultIndex;
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stderr,
+  const answer = await select({
+    message: question,
+    choices: choices.map((label, i) => ({
+      name: label,
+      value: i,
+    })),
+    default: defaultIndex,
   });
 
-  const lines = choices
-    .map((c, i) => `  ${i === defaultIndex ? ">" : " "} ${i + 1}. ${c}`)
-    .join("\n");
-
-  return new Promise((resolve) => {
-    rl.question(`${question}\n${lines}\n  Choice [${defaultIndex + 1}]: `, (answer) => {
-      rl.close();
-      const trimmed = answer.trim();
-      if (trimmed === "") return resolve(defaultIndex);
-      const num = parseInt(trimmed, 10);
-      if (num >= 1 && num <= choices.length) return resolve(num - 1);
-      return resolve(defaultIndex);
-    });
-  });
+  return answer;
 }
 
 /**
- * Interactive prompt: present a list of toggles, return selected indices.
- * User enters comma-separated numbers or "none" / empty for defaults.
+ * Interactive prompt: present a list of checkboxes, return selected indices.
+ * Non-TTY returns the default-on items.
  */
-export function promptMulti(
+export async function promptMulti(
   question: string,
   choices: { label: string; defaultOn: boolean }[],
 ): Promise<Set<number>> {
   if (!process.stdin.isTTY) {
     const defaults = new Set<number>();
     choices.forEach((c, i) => { if (c.defaultOn) defaults.add(i); });
-    return Promise.resolve(defaults);
+    return defaults;
   }
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stderr,
+  const answers = await checkbox({
+    message: question,
+    choices: choices.map((c, i) => ({
+      name: c.label,
+      value: i,
+      checked: c.defaultOn,
+    })),
   });
 
-  const lines = choices
-    .map((c, i) => `    ${i + 1}. [${c.defaultOn ? "x" : " "}] ${c.label}`)
-    .join("\n");
-
-  const defaultNums = choices
-    .map((c, i) => c.defaultOn ? String(i + 1) : null)
-    .filter(Boolean)
-    .join(",");
-
-  return new Promise((resolve) => {
-    rl.question(
-      `${question}\n${lines}\n  Enter numbers (comma-separated) or press enter for defaults [${defaultNums || "none"}]: `,
-      (answer) => {
-        rl.close();
-        const trimmed = answer.trim().toLowerCase();
-        if (trimmed === "" || trimmed === "default" || trimmed === "defaults") {
-          const defaults = new Set<number>();
-          choices.forEach((c, i) => { if (c.defaultOn) defaults.add(i); });
-          return resolve(defaults);
-        }
-        if (trimmed === "none" || trimmed === "0") return resolve(new Set());
-        if (trimmed === "all") {
-          return resolve(new Set(choices.map((_, i) => i)));
-        }
-        const selected = new Set<number>();
-        for (const part of trimmed.split(/[,\s]+/)) {
-          const num = parseInt(part, 10);
-          if (num >= 1 && num <= choices.length) selected.add(num - 1);
-        }
-        return resolve(selected);
-      },
-    );
-  });
+  return new Set(answers);
 }
 
 /**

@@ -14,7 +14,7 @@
  * so user's opencode.json overrides take effect.
  */
 
-import type { Plugin, Hooks } from "@opencode-ai/plugin";
+import type { Plugin, Hooks, PluginOptions } from "@opencode-ai/plugin";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -144,7 +144,13 @@ async function checkForUpdate(client: any): Promise<void> {
 
 // ---- Plugin entry ----
 
-const plugin: Plugin = async (input) => {
+const plugin: Plugin = async (input, options) => {
+  // Plugin options come from the opencode.json tuple:
+  //   "plugin": [["@glrs-dev/harness-opencode", { models: {...}, toolHooks: {...} }]]
+  // This is where users configure model tiers and tool-hooks behavior.
+  // The options object is passed through to config-hook and sub-plugins.
+  const pluginOptions = options ?? {};
+
   // Load .env / .env.local into process.env before anything else —
   // MCP config {env:VAR} interpolation reads process.env, so this must
   // run before sub-plugins and before OpenCode resolves MCP server config.
@@ -158,7 +164,7 @@ const plugin: Plugin = async (input) => {
   const notifyHooks = await notifyPlugin(input);
   const costTrackerHooks = await costTrackerPlugin(input);
   const pilotHooks = await pilotPlugin(input);
-  const toolHooks = await toolHooksPlugin(input);
+  const toolHooks = await toolHooksPlugin(input, pluginOptions);
 
   // Merge all hooks.
   //
@@ -173,7 +179,7 @@ const plugin: Plugin = async (input) => {
   const hooks: Hooks = {
     // Config hook: register agents, commands, MCPs, skills
     config: async (config) => {
-      applyConfig(config);
+      applyConfig(config, pluginOptions);
       // Let sub-plugins also mutate config if they need to
       if (autopilotHooks.config) await autopilotHooks.config(config);
       if (notifyHooks.config) await notifyHooks.config(config);
