@@ -34,6 +34,7 @@ describe("AGENT_TIERS", () => {
       "architecture-advisor",
       "gap-analyzer",
       "orchestrator",
+      "pilot-planner",
       "plan",
       "plan-reviewer",
       "qa-thorough",
@@ -43,6 +44,7 @@ describe("AGENT_TIERS", () => {
       "build",
       "docs-maintainer",
       "lib-reader",
+      "pilot-builder",
       "qa-reviewer",
     ]);
     expect(fast).toEqual(["code-searcher"]);

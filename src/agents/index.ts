@@ -41,6 +41,8 @@ const architectureAdvisorPrompt = readPrompt("architecture-advisor.md");
 const docsMaintainerPrompt = readPrompt("docs-maintainer.md");
 const libReaderPrompt = readPrompt("lib-reader.md");
 const agentsMdWriterPrompt = readPrompt("agents-md-writer.md");
+const pilotBuilderPrompt = readPrompt("pilot-builder.md");
+const pilotPlannerPrompt = readPrompt("pilot-planner.md");
 
 /** Strip YAML frontmatter (--- ... ---) from a markdown string. */
 function stripFrontmatter(md: string): string {
@@ -513,6 +515,120 @@ const AGENTS_MD_WRITER_PERMISSIONS = {
   linear: "deny",
 };
 
+// ---- Pilot agents ---------------------------------------------------------
+
+/**
+ * pilot-builder: invoked by the pilot worker (Phase E) one task at a
+ * time. Runs inside a per-task git worktree. Must NEVER commit, push,
+ * tag, or open a PR — the worker handles commits when verify+touches
+ * pass. The runtime worker enforces this via its own state machine,
+ * but the permission map is the FIRST wall — denials here mean the
+ * agent can't even attempt the destructive command, saving a turn.
+ *
+ * The DESTRUCTIVE_BUILDER_DENIES include all the standard CORE_DESTRUCTIVE
+ * patterns plus pilot-specific commit/push/branch operations. Since
+ * specific patterns sort AFTER `*: allow` (per the root-cause comment
+ * near ORCHESTRATOR_PERMISSIONS), the denies win for the matching commands
+ * even though we keep `*: allow` for general bash usage.
+ *
+ * (Phase H1 will add a plugin-layer hook that ALSO denies these — belt
+ * and suspenders. If a future opencode SDK release subtly changes
+ * permission resolution, the plugin hook is the durable safety net.)
+ */
+const PILOT_BUILDER_PERMISSIONS = {
+  edit: "allow" as const,
+  bash: {
+    "*": "allow",
+    ...CORE_BASH_ALLOW_LIST,
+    ...CORE_DESTRUCTIVE_BASH_DENIES,
+    // Pilot-specific destructive denies — the builder NEVER commits,
+    // pushes, switches branches, or opens PRs. The worker does this
+    // for the agent.
+    "git commit*": "deny",
+    "git push*": "deny",
+    "git tag*": "deny",
+    "git checkout *": "deny",
+    "git switch *": "deny",
+    "git branch *": "deny",
+    "git restore --source*": "deny",
+    "git reset *": "deny",
+    "gh pr *": "deny",
+    "gh release *": "deny",
+  },
+  webfetch: "allow" as const,
+  ast_grep: "allow",
+  tsc_check: "allow",
+  eslint_check: "allow",
+  todo_scan: "allow",
+  comment_check: "allow",
+  // Builder is unattended — must never call the question tool. (The
+  // worker enforces this via the prompt + STOP protocol; permission
+  // denial is a backstop.)
+  question: "deny",
+  serena: "allow",
+  memory: "deny",   // pilot tasks are stateless; no per-session memory.
+  git: "allow",     // read-only git tools (status, log, diff).
+  playwright: "deny",
+  linear: "deny",
+};
+
+/**
+ * pilot-planner: produces YAML plans for the pilot subsystem. Reads
+ * the codebase liberally (Serena, ast_grep, todo_scan, linear,
+ * webfetch for ticket research), but writes ONLY inside the pilot
+ * plans directory. Phase H1 adds a plugin hook that double-enforces
+ * the path restriction at edit-tool execution time.
+ *
+ * Bash is mostly denied to keep the planner from running mutating
+ * commands; we open up a narrow allow for the validate subcommand
+ * so the planner can self-check its draft plans.
+ */
+const PILOT_PLANNER_PERMISSIONS = {
+  edit: "allow" as const,
+  bash: {
+    "*": "deny",
+    // Read-only inspection — same surface as PLAN_PERMISSIONS, plus a few.
+    "ls *": "allow",
+    "cat *": "allow",
+    "head *": "allow",
+    "tail *": "allow",
+    "wc *": "allow",
+    "grep *": "allow",
+    "rg *": "allow",
+    "find *": "allow",
+    "git status *": "allow",
+    "git log *": "allow",
+    "git diff *": "allow",
+    "git show *": "allow",
+    "git branch *": "allow",
+    "git rev-parse *": "allow",
+    // Pilot CLI: validate, plan-dir for self-check + path resolution.
+    "bunx @glrs-dev/harness-opencode pilot validate *": "allow",
+    "bunx @glrs-dev/harness-opencode pilot validate": "allow",
+    "bunx @glrs-dev/harness-opencode pilot plan-dir": "allow",
+    "bunx @glrs-dev/harness-opencode pilot plan-dir *": "allow",
+    "bunx @glrs-dev/harness-opencode plan-dir": "allow",
+    "bunx @glrs-dev/harness-opencode plan-dir *": "allow",
+  },
+  // No webfetch by default — the planner reads tickets via the linear
+  // MCP. If the user invokes with a GitHub URL, they need the linear
+  // / webfetch combination explicitly. Mark deny here and the operator
+  // can override per-session.
+  webfetch: "deny" as const,
+  ast_grep: "allow",
+  tsc_check: "deny",       // no need to typecheck; we're writing YAML.
+  eslint_check: "deny",
+  todo_scan: "allow",
+  comment_check: "allow",
+  question: "allow",       // the planner CAN ask the human (interactive).
+  serena: "allow",
+  memory: "deny",
+  git: "allow",            // read-only git tools.
+  playwright: "deny",
+  linear: "allow",
+};
+
+
 // ---- Tier map ----
 
 export type ModelTier = "deep" | "mid" | "fast";
@@ -535,11 +651,13 @@ export const AGENT_TIERS: Record<string, ModelTier> = {
   "architecture-advisor": "deep",
   "plan-reviewer": "deep",
   "gap-analyzer": "deep",
+  "pilot-planner": "deep",
   build: "mid",
   "qa-reviewer": "mid",
   "docs-maintainer": "mid",
   "lib-reader": "mid",
   "agents-md-writer": "mid",
+  "pilot-builder": "mid",
   "code-searcher": "fast",
 };
 
@@ -597,6 +715,24 @@ export function createAgents(): Record<string, AgentConfig> {
     }),
     "agents-md-writer": agentFromPrompt(agentsMdWriterPrompt, {
       permission: AGENTS_MD_WRITER_PERMISSIONS as AgentConfig["permission"],
+    }),
+
+    // Pilot subsystem agents (Phase F1 + F2). The frontmatter sets
+    // mode/model/description; temperature is passed via override
+    // because `agentFromPrompt` doesn't currently parse the
+    // temperature field (and we don't want to change that helper for
+    // every agent at once — out of scope for F1/F2).
+    "pilot-builder": agentFromPrompt(pilotBuilderPrompt, {
+      mode: "primary",
+      model: "anthropic/claude-sonnet-4-6",
+      temperature: 0.1,
+      permission: PILOT_BUILDER_PERMISSIONS as AgentConfig["permission"],
+    }),
+    "pilot-planner": agentFromPrompt(pilotPlannerPrompt, {
+      mode: "primary",
+      model: "anthropic/claude-opus-4-7",
+      temperature: 0.3,
+      permission: PILOT_PLANNER_PERMISSIONS as AgentConfig["permission"],
     }),
   };
 }

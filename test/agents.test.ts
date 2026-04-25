@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, test, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createAgents } from "../src/agents/index.js";
@@ -8,12 +8,20 @@ import { applyConfig } from "../src/config-hook.js";
 describe("createAgents", () => {
   const agents = createAgents();
 
-  it("returns exactly 12 agents", () => {
-    expect(Object.keys(agents).length).toBe(12);
+  it("returns exactly 14 agents", () => {
+    // 3 original primary + 9 subagents + 2 pilot primaries (Phase F1+F2)
+    expect(Object.keys(agents).length).toBe(14);
   });
 
-  it("has the 3 primary agents with mode=primary", () => {
-    for (const name of ["orchestrator", "plan", "build"]) {
+  it("has 5 primary agents with mode=primary", () => {
+    // 3 originals + pilot-planner + pilot-builder
+    for (const name of [
+      "orchestrator",
+      "plan",
+      "build",
+      "pilot-builder",
+      "pilot-planner",
+    ]) {
       expect(agents[name]).toBeDefined();
       expect(agents[name]!.mode).toBe("primary");
     }
@@ -104,6 +112,111 @@ describe("createAgents", () => {
     expect(merged["orchestrator"]!.prompt).toBe("custom prompt");
     // Other agents unaffected
     expect(merged["plan"]).toEqual(agents["plan"]);
+  });
+});
+
+// --- Pilot agents (Phase F1 + F2) ----------------------------------------
+
+describe("pilot agents", () => {
+  const agents = createAgents();
+
+  test("pilot-builder is registered with mode=primary", () => {
+    const a = agents["pilot-builder"];
+    expect(a).toBeDefined();
+    expect(a!.mode).toBe("primary");
+    expect(a!.model).toBe("anthropic/claude-sonnet-4-6");
+    expect(a!.temperature).toBe(0.1);
+  });
+
+  test("pilot-planner is registered with mode=primary", () => {
+    const a = agents["pilot-planner"];
+    expect(a).toBeDefined();
+    expect(a!.mode).toBe("primary");
+    expect(a!.model).toBe("anthropic/claude-opus-4-7");
+    expect(a!.temperature).toBe(0.3);
+  });
+
+  test("pilot-builder denies destructive git operations (commit / push / branch)", () => {
+    const perm = agents["pilot-builder"]!.permission as Record<
+      string,
+      unknown
+    >;
+    const bash = perm.bash as Record<string, string>;
+    expect(bash["git commit*"]).toBe("deny");
+    expect(bash["git push*"]).toBe("deny");
+    expect(bash["git tag*"]).toBe("deny");
+    expect(bash["git checkout *"]).toBe("deny");
+    expect(bash["git switch *"]).toBe("deny");
+    expect(bash["git branch *"]).toBe("deny");
+    expect(bash["gh pr *"]).toBe("deny");
+    expect(bash["gh release *"]).toBe("deny");
+  });
+
+  test("pilot-builder denies the question tool (unattended invariant)", () => {
+    const perm = agents["pilot-builder"]!.permission as Record<
+      string,
+      unknown
+    >;
+    expect(perm.question).toBe("deny");
+  });
+
+  test("pilot-builder still allows general bash through CORE_BASH_ALLOW_LIST", () => {
+    const perm = agents["pilot-builder"]!.permission as Record<
+      string,
+      unknown
+    >;
+    const bash = perm.bash as Record<string, string>;
+    // A few representative entries from CORE_BASH_ALLOW_LIST.
+    expect(bash["bun test *"]).toBe("allow");
+    expect(bash["ls *"]).toBe("allow");
+    expect(bash["git status *"]).toBe("allow");
+    expect(bash["git diff *"]).toBe("allow");
+  });
+
+  test("pilot-planner denies bash by default but allows pilot validate / plan-dir", () => {
+    const perm = agents["pilot-planner"]!.permission as Record<
+      string,
+      unknown
+    >;
+    const bash = perm.bash as Record<string, string>;
+    expect(bash["*"]).toBe("deny");
+    expect(bash["bunx @glrs-dev/harness-opencode pilot validate"]).toBe(
+      "allow",
+    );
+    expect(bash["bunx @glrs-dev/harness-opencode pilot validate *"]).toBe(
+      "allow",
+    );
+    expect(bash["bunx @glrs-dev/harness-opencode pilot plan-dir"]).toBe(
+      "allow",
+    );
+  });
+
+  test("pilot-planner allows the question tool (interactive planning)", () => {
+    const perm = agents["pilot-planner"]!.permission as Record<
+      string,
+      unknown
+    >;
+    expect(perm.question).toBe("allow");
+  });
+
+  test("pilot agents have non-empty descriptions", () => {
+    expect(
+      (agents["pilot-builder"]!.description as string).length,
+    ).toBeGreaterThan(20);
+    expect(
+      (agents["pilot-planner"]!.description as string).length,
+    ).toBeGreaterThan(20);
+  });
+
+  test("pilot-builder prompt mentions STOP protocol", () => {
+    const prompt = agents["pilot-builder"]!.prompt as string;
+    expect(prompt).toMatch(/STOP:/);
+    expect(prompt.toLowerCase()).toMatch(/never commit/);
+  });
+
+  test("pilot-planner prompt references the pilot-planning skill", () => {
+    const prompt = agents["pilot-planner"]!.prompt as string;
+    expect(prompt).toMatch(/pilot-planning/);
   });
 });
 

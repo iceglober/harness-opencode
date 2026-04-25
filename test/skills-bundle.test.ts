@@ -66,11 +66,12 @@ describe("skills bundle", () => {
     expect(fs.existsSync(DIST_SKILLS)).toBe(true);
   });
 
-  it("has exactly 4 skill directories", () => {
+  it("has exactly 5 skill directories", () => {
     const dirs = fs.readdirSync(DIST_SKILLS, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
     expect(dirs.sort()).toEqual([
+      "pilot-planning",
       "review-plan",
       "vercel-composition-patterns",
       "vercel-react-best-practices",
@@ -86,6 +87,25 @@ describe("skills bundle", () => {
   it("vercel-react-best-practices has 61 files", () => {
     const dir = path.join(DIST_SKILLS, "vercel-react-best-practices");
     expect(countFiles(dir)).toBe(61);
+  });
+
+  it("pilot-planning has SKILL.md + 7 rules (8 files total)", () => {
+    const dir = path.join(DIST_SKILLS, "pilot-planning");
+    expect(countFiles(dir)).toBe(8);
+    // Verify the rules dir contains all 7 expected files (per the
+    // pilot-planning skill's published structure).
+    const ruleFiles = fs
+      .readdirSync(path.join(dir, "rules"))
+      .sort();
+    expect(ruleFiles).toEqual([
+      "dag-shape.md",
+      "decomposition.md",
+      "first-principles.md",
+      "milestones.md",
+      "self-review.md",
+      "touches-scope.md",
+      "verify-design.md",
+    ]);
   });
 
   it("every SKILL.md has required frontmatter: name and description", () => {

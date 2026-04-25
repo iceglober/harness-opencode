@@ -10,6 +10,7 @@ An npm-published OpenCode plugin. Not a bash installer. Not a git-clone-into-$HO
 glorious-opencode/
 ├── src/
 │   ├── index.ts              # Plugin entry — config hook, tools, events
+│   ├── cli.ts                # CLI entry (cmd-ts: harness-opencode <subcommand>)
 │   ├── agents/               # Agent definitions + prompts
 │   │   ├── index.ts          # createAgents() — returns Record<string, AgentConfig>
 │   │   ├── prompts/*.md      # Agent prompt files (read at runtime via readFileSync)
@@ -17,12 +18,25 @@ glorious-opencode/
 │   ├── commands/             # Slash command definitions + prompts
 │   ├── skills/               # Bundled skill directories (copied to dist/skills/)
 │   ├── tools/                # Custom tool implementations
-│   ├── plugins/              # Sub-plugins (autopilot, notify)
+│   ├── plugins/              # Sub-plugins (autopilot, notify, cost-tracker, pilot-plugin)
 │   ├── mcp/                  # MCP server configuration
 │   ├── bin/                  # Shell scripts (memory-mcp-launcher.sh, plan-check.sh)
-│   └── cli/                  # CLI subcommands (install, uninstall, doctor, merge-config)
+│   ├── cli/                  # Top-level CLI subcommands (install, uninstall, doctor, merge-config)
+│   └── pilot/                # Pilot subsystem (autonomous task execution)
+│       ├── plan/             # pilot.yaml schema + loader + DAG + globs + slug
+│       ├── state/            # SQLite state (runs/tasks/events) + accessors
+│       ├── worktree/         # git wrappers + worktree pool
+│       ├── opencode/         # opencode server lifecycle + EventBus + prompts
+│       ├── verify/           # verify-runner + touches enforcement
+│       ├── worker/           # main worker loop + STOP detection
+│       ├── scheduler/        # ready-set / cascade-fail
+│       ├── cli/              # `pilot <verb>` cmd-ts subcommands
+│       └── paths.ts          # ~/.glorious/opencode/<repo>/pilot/* path resolution
 ├── test/                     # bun:test test files
+├── docs/                     # Architecture docs and spike notes
+│   └── pilot/spikes/         # Phase-0 de-risking notes (S1-S6)
 ├── dist/                     # Build output (gitignored)
+├── PILOT_TODO.md             # Pilot subsystem ship checklist
 ├── package.json              # npm package metadata
 ├── tsconfig.json             # TypeScript config
 └── tsup.config.ts            # Build config (tsup)
@@ -30,7 +44,7 @@ glorious-opencode/
 
 ## Rules when editing this repo
 
-1. **Zero user-filesystem-writes invariant.** The plugin MUST NOT write to `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode/skills/`, `~/.config/opencode/tools/`, or `~/.claude/`. The only permitted filesystem mutation is the CLI's `install` subcommand writing to `~/.config/opencode/opencode.json` (plugin-array entry, non-destructive merge). Skills live in `node_modules` (read-only by design).
+1. **Zero user-filesystem-writes invariant.** The plugin MUST NOT write to `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode/skills/`, `~/.config/opencode/tools/`, or `~/.claude/`. The only permitted filesystem mutations are: (a) the CLI's `install` subcommand writing to `~/.config/opencode/opencode.json` (plugin-array entry, non-destructive merge), and (b) the pilot subsystem writing under `~/.glorious/opencode/<repo>/pilot/` (state DB, worktrees, logs, plans). Skills live in `node_modules` (read-only by design).
 
 2. **Type-surface escape hatches are permitted where the SDK is narrower than the runtime.** Known gaps: `permission.external_directory` path-keyed maps; per-tool-name permission keys in `AgentConfig` (`ast_grep`, `tsc_check`, etc.); `skills.paths` (v2 SDK type, may not be in v1). Use `as unknown as Config` / narrow module augmentation. Document each escape hatch in `docs/plugin-architecture.md`.
 
@@ -47,6 +61,8 @@ glorious-opencode/
 8. **No dangling path references in prompts.** Every file under `src/agents/prompts/`, `src/commands/prompts/`, and `src/skills/**/*.md` must not contain `~/.claude`, `home/.claude`, `~/.config/opencode`, or `home/.config/opencode`. CI enforces this via `test/prompts-no-dangling-paths.test.ts`.
 
 9. **Rollback recipe for maintainers.** For a broken release: `npm deprecate @glrs-dev/harness-opencode@<broken> "<reason>; use <fix>"`, then ship the fix via the normal flow — `bunx changeset` (pick `patch`, describe the fix), merge, then merge the auto-opened "Version Packages" PR. Users on floating semver auto-recover on next `bun update`.
+
+10. **Pilot subsystem registers via the standard surfaces.** `pilot-builder` and `pilot-planner` agents register through `createAgents()` like every other agent. The `pilot-planning` skill ships in `src/skills/` and bundles to `dist/skills/` like every other skill. The CLI subcommands wire into the top-level cmd-ts tree under the `pilot` key. The `pilot-plugin.ts` is a sub-plugin that hooks `tool.execute.before` to enforce builder/planner invariants at runtime (alongside the agents' permission maps). The pilot subsystem's PERSISTENT state — SQLite DB, git worktrees, JSONL logs, YAML plans — lives under `~/.glorious/opencode/<repo>/pilot/`, NOT under `~/.config/opencode/`. Per-repo derivation mirrors `src/plan-paths.ts`'s `getRepoFolder` (the `git rev-parse --git-common-dir` strategy).
 
 ## When adding a new agent
 

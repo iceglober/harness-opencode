@@ -103,5 +103,59 @@ export function doctor(): void {
     fail("Neither bun nor npm found — cannot install plugins");
   }
 
+  // 6. Pilot subsystem prerequisites.
+  console.log();
+  console.log(`${c.bold}Pilot subsystem${c.reset}`);
+
+  // git is required for the worktree pool (Phase C1).
+  if (which("git")) {
+    const gitVer = cmd("git --version") ?? "";
+    // Confirm `git worktree --help` works on this version (the pool's
+    // load-bearing operation). If the user has a truly ancient git,
+    // the worktree command isn't available.
+    const worktreeHelp = cmd("git worktree --help 2>&1 | head -1");
+    if (worktreeHelp && !worktreeHelp.toLowerCase().includes("not a git command")) {
+      ok(`git ${gitVer} (worktree available)`);
+    } else {
+      fail(`git ${gitVer} but \`git worktree\` is unavailable — pilot needs a recent git (>=2.5)`);
+    }
+  } else {
+    fail("git not found — pilot subsystem requires git for worktree management");
+  }
+
+  // bash is required for the verify-runner (Phase D4).
+  if (which("bash")) {
+    ok("bash (verify-runner shell)");
+  } else {
+    fail("bash not found — pilot's verify commands run via `bash -c`");
+  }
+
+  // Pilot agents resolved in opencode config? Cheap probe: `opencode agent list`.
+  const agentList = cmd("opencode agent list 2>/dev/null");
+  if (agentList !== null) {
+    if (agentList.includes("pilot-builder")) {
+      ok("pilot-builder agent registered");
+    } else {
+      warn(
+        "pilot-builder agent NOT in `opencode agent list` — plugin may not be loaded; run: bunx " +
+          PLUGIN_NAME +
+          " install",
+      );
+    }
+    if (agentList.includes("pilot-planner")) {
+      ok("pilot-planner agent registered");
+    } else {
+      warn(
+        "pilot-planner agent NOT in `opencode agent list` — plugin may not be loaded; run: bunx " +
+          PLUGIN_NAME +
+          " install",
+      );
+    }
+  } else {
+    warn(
+      "could not run `opencode agent list` — skipping pilot agent registration check",
+    );
+  }
+
   console.log();
 }

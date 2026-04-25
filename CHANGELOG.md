@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- [#80](https://github.com/iceglober/harness-opencode/pull/80) [`6b3f9f6`](https://github.com/iceglober/harness-opencode/commit/6b3f9f69bb24abd41908f7c3c8f439d9a8c1b494) Thanks [@iceglober](https://github.com/iceglober)! - Add the pilot subsystem (v0.1+v0.2) — autonomous task execution from a YAML plan.
+
+  **New CLI surface**: `bunx @glrs-dev/harness-opencode pilot <verb>` with verbs `validate`, `plan`, `build`, `status`, `resume`, `retry`, `logs`, `worktrees`, `cost`, and `plan-dir`. Migrated the entire CLI to `cmd-ts` for declarative argument parsing and auto-generated `--help`.
+
+  **Two new agents** registered via `createAgents()`:
+
+  - **`pilot-builder`** (mid tier, `claude-sonnet-4-6`): unattended task executor. Runs one task at a time inside a per-task git worktree. Permission map denies `git commit/push/tag/branch/checkout/switch/restore/reset` and `gh pr/release` so the worker — not the agent — owns commits. Also denies the `question` tool (unattended invariant). Uses the STOP protocol when blocked.
+
+  - **`pilot-planner`** (deep tier, `claude-opus-4-7`): interactive planner. Decomposes a Linear ticket / GitHub issue / free-form description into a `pilot.yaml` task DAG. Edits restricted to the pilot plans directory by both the agent's permission map and the new `pilot-plugin` runtime hook (belt-and-suspenders).
+
+  **One new skill** (`src/skills/pilot-planning/`): SKILL.md + 7 rules covering first-principles task framing, decomposition, verify-command design, touches-scope tightness, DAG shape, milestone grouping, and self-review.
+
+  **One new sub-plugin** (`src/plugins/pilot-plugin.ts`): hooks `tool.execute.before` to enforce builder/planner invariants at runtime. Classifies sessions by title prefix (`pilot/<runId>/<taskId>`) and working directory; non-pilot sessions pass through unchanged.
+
+  **Persistent state** lives under `~/.glorious/opencode/<repo>/pilot/` (NOT in `~/.config/opencode/`) — SQLite state DB, git worktrees, JSONL worker logs, YAML plan artifacts. Per-repo derivation matches `src/plan-paths.ts`.
+
+  **Doctor** (`bunx @glrs-dev/harness-opencode doctor`) now reports git/bash availability and pilot agent registration status.
+
+  **Tested**: 740+ tests, all green. Pre-implementation spikes documented under `docs/pilot/spikes/`.
+
+  **Known limitations** (deferred to v0.3+):
+
+  - Single-worker only (`--workers >1` clamps to 1 with a warning).
+  - No PR creation (pilot stops at committed branches; use `/ship` separately).
+  - No cost-cap preemption (cost is reporting-only).
+  - No Slack notifications, no Ink TUI for `pilot status --watch`.
+
+## 0.8.0
+
+### Minor Changes
+
+- [#79](https://github.com/iceglober/harness-opencode/pull/79) [`e05bfe8`](https://github.com/iceglober/harness-opencode/commit/e05bfe802a9ad5fca1d68c2954b55c547e998eaf) Thanks [@iceglober](https://github.com/iceglober)! - Add dotenv loader plugin for MCP config interpolation
+
+  Loads `.env` and `.env.local` into `process.env` at plugin-init time so `{env:VAR}` references in MCP server config resolve project-local secrets without a shell-side `source .env` ritual. Shell exports still win (never overwritten), `.env.local` overrides `.env`, missing files silently skipped. Zero external dependencies — inline parser only.
+
+- [#79](https://github.com/iceglober/harness-opencode/pull/79) [`e05bfe8`](https://github.com/iceglober/harness-opencode/commit/e05bfe802a9ad5fca1d68c2954b55c547e998eaf) Thanks [@iceglober](https://github.com/iceglober)! - Add `harness.models` config for tier-based and per-agent model overrides
+
+  Introduces a `harness.models` key in `opencode.json` that lets users override which LLM model each agent uses, either by tier (`deep`, `mid`, `fast`) or per-agent name. Tier assignments cover all 12 agents; per-agent overrides win over tier. No change for users who don't set the key — all agents keep their plugin defaults.
+
+### Patch Changes
+
+- [#75](https://github.com/iceglober/harness-opencode/pull/75) [`01dd824`](https://github.com/iceglober/harness-opencode/commit/01dd82470f24ac542467b1624d0250fd90f12ed5) Thanks [@iceglober](https://github.com/iceglober)! - Autopilot hardening: silent circuit breakers against umbrella plans, wrong-branch work, and stuck loops
+
+  The autopilot plugin previously nudged on every unchecked `- [ ]` in `## Acceptance criteria` regardless of plan shape. When pointed at an umbrella plan (18 Linear issues across 7+ branches, multi-week roadmap with production-measurement ACs), it would keep nudging past explicit STOP reports until the 20-iteration cap fired. The cap had a quiet bug: if the "stopped, something's stuck" nudge hit the debounce window, `stopped` stayed unset and the cap could be re-tested on the next idle.
+
+  This adds six silent circuit breakers — no user prompts, no permission checks, matching the design rule that autopilot never asks for anything:
+
+  - **Plan-shape classifier.** `classifyPlan()` detects **umbrella** plans (has `## Chunks`/`## Milestones`/`## Workstreams` headers, 3+ distinct Linear IDs, or > 50KB), **measurement-gated** plans (phrases like `7-day`, `post-deploy`, `SLO`, `success rate reaches`, `bake time` in the AC section), and **opt-out** plans (magic comment `<!-- autopilot: skip -->`). Non-unit plans stop the session silently with a shape-specific reason.
+  - **Branch/plan alignment.** Extracts the first Linear ID from the plan's `## Goal` and compares (case-insensitive) against `git branch --show-current`. Mismatch → silent stop.
+  - **PR-state short-circuit.** Shells out to `gh pr view --json state` for the current branch; `MERGED` → silent stop. Cached for 5 minutes per session. Graceful degrade when `gh` is unavailable.
+  - **Kill switch.** File at `.agent/autopilot-disable` → silent stop. `touch .agent/autopilot-disable` from any terminal kills the loop; `rm` to re-enable for future sessions.
+  - **STOP-report backoff.** Two consecutive assistant messages matching `^STOP[:.\s—]` → silent stop. Counter resets when the unchecked-box count drops (agent made real progress).
+  - **Iteration-cap fix.** `stopped: true` is set unconditionally at the cap, regardless of whether the final nudge was debounced.
+
+  Prompt (`autopilot.md`) now documents the plan-shape contract, the `[~]` (pending) and `[-]` (blocked) AC markers (which `countUnchecked` already ignored but the orchestrator didn't know to write), and the full expanded stop-conditions list.
+
+  New `SessionState` fields: `stopReason`, `consecutiveStops`, `prState`, `prCheckedAt`, `lastUncheckedCount`. All optional; unaffected sessions migrate in place.
+
+  No user-facing workflow changes for well-formed unit plans — they nudge exactly as before.
+
+- [#73](https://github.com/iceglober/harness-opencode/pull/73) [`d35f93d`](https://github.com/iceglober/harness-opencode/commit/d35f93da26859c3b509641170f64bf226cda358e) Thanks [@iceglober](https://github.com/iceglober)! - Fix: silence bash ask-prompts for qa-reviewer, qa-thorough, orchestrator, and build
+
+  Switch the agent-level `permission.bash` from scalar `"allow"` to an object-form map with an enumerated allow-list of non-destructive commands (`pnpm lint *`, `tail *`, `ls *`, `git diff *`, `git merge-base *`, `git log *`, `bunx *`, etc.). Live log evidence (commits c9a288d/3483448 notwithstanding) confirmed an upstream OpenCode layer injects `{bash, *, ask}` that beats our scalar `allow` via last-match-wins in `Permission.evaluate`. Specific-pattern keys sort later in the ruleset and win.
+
+  Destructive-command denies (`rm -rf /`, `chmod`, `chown`, `sudo`, `git push --force`) are preserved; `git push --force-with-lease` remains an explicit re-allow.
+
+  Also ships a gated diagnostic probe: set `HARNESS_OPENCODE_PERM_DEBUG=1` to dump every agent's final permission block to `$XDG_STATE_HOME/harness-opencode/perm-debug.json`. Silent and zero-overhead when unset. Use it to verify the fix on your machine or to diagnose future permission-resolution issues.
+
 ## 0.7.0
 
 ### Minor Changes
