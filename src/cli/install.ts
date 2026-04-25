@@ -312,7 +312,7 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
   const existingProvider = detectModelProvider(existing);
   const existingMcps = detectEnabledMcps(existing);
   const existingOpts = extractPluginOptions(existing);
-  const hasModels = !!(existingOpts?.models ?? existing?.harness?.models);
+  let hasModels = !!(existingOpts?.models ?? existing?.harness?.models);
 
   console.log(`\n${c.bold}${c.blue}@glrs-dev/harness-opencode${c.reset} setup\n`);
 
@@ -332,7 +332,22 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
     const unconfiguredMcps = MCP_TOGGLES.filter(
       (t) => !existingMcps.has(t.name) && !existing?.mcp?.[t.name],
     );
-    if (unconfiguredMcps.length === 0) {
+
+    if (interactive) {
+      // Offer to reconfigure models.
+      const reconfigure = await promptChoice(
+        "  Reconfigure models?",
+        ["No, keep current config", "Yes, reconfigure models"],
+        0,
+      );
+      if (reconfigure === 1) {
+        // Fall through to the model prompt below by clearing hasModels.
+        hasModels = false;
+      } else if (unconfiguredMcps.length === 0) {
+        console.log(`\n${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.\n`);
+        return;
+      }
+    } else if (unconfiguredMcps.length === 0) {
       console.log(`\n${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.\n`);
       return;
     }
