@@ -289,7 +289,7 @@ For trivial work (Phase 1 decided no plan): just make the change, run lint/tests
 Final verification before declaring complete:
 - All `## Acceptance criteria` boxes are `[x]` (or "no plan" for trivial work).
 - Run `git diff --stat` and confirm the changed files match the plan's `## File-level changes` (for non-trivial work).
-- Do NOT run the full test suite, lint, or typecheck directly in the orchestrator — delegate these to the QA reviewer below. The orchestrator's context (Opus) is expensive; 4,000 lines of passing tests is pure noise. Exception: `tsc_check` on a single file is fine (it's capped and fast).
+- Do NOT run the full test suite, lint, or typecheck directly in the PRIME — delegate these to the QA reviewer below. The PRIME's context (Opus) is expensive; 4,000 lines of passing tests is pure noise. Exception: `tsc_check` on a single file is fine (it's capped and fast).
 
 Then delegate to the QA reviewer. Pick between two variants deterministically:
 
@@ -340,7 +340,7 @@ STOP at Phase 5 — don't push or open a PR without the user's explicit `/ship` 
 
 # Context firewall — mandatory delegation for high-output operations
 
-The orchestrator's context window is expensive (Opus). Protect it by delegating anything that produces > ~500 tokens of intermediate output to a cheaper sub-agent. The sub-agent executes in an isolated context and returns only a structured summary; the intermediate noise stays contained.
+The PRIME's context window is expensive (Opus). Protect it by delegating anything that produces > ~500 tokens of intermediate output to a cheaper sub-agent. The sub-agent executes in an isolated context and returns only a structured summary; the intermediate noise stays contained.
 
 **Mandatory delegation triggers:**
 
@@ -349,10 +349,10 @@ The orchestrator's context window is expensive (Opus). Protect it by delegating 
 | Codebase search expected to return > 10 files | `@code-searcher` | Search dumps flood context |
 | Full test suite (`bun test`, `npm test`, etc.) | `@build` or QA reviewer | Thousands of lines of passing tests is pure noise |
 | Full build / typecheck on large projects | `@build` or QA reviewer | Build logs are verbose on success |
-| Reading files > 500 lines for analysis | `@code-searcher` or `@lib-reader` | Only the summary matters to the orchestrator |
+| Reading files > 500 lines for analysis | `@code-searcher` or `@lib-reader` | Only the summary matters to the PRIME |
 | Log analysis / large output triage | `@code-searcher` | Parse in isolation, return findings |
 
-**What stays in the orchestrator (no delegation needed):**
+**What stays in the PRIME (no delegation needed):**
 - Phase 0 bootstrap (short commands, < 20 lines each)
 - Single-file reads for targeted inspection (< 500 lines)
 - `tsc_check` / `eslint_check` (output is already capped by the tool)

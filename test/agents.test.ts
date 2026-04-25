@@ -13,21 +13,18 @@ describe("createAgents", () => {
     expect(Object.keys(agents).length).toBe(14);
   });
 
-  it("has 5 primary agents with mode=primary", () => {
-    // 3 originals + pilot-planner + pilot-builder
+  it("has 3 primary agents with mode=primary", () => {
     for (const name of [
       "prime",
       "plan",
       "build",
-      "pilot-builder",
-      "pilot-planner",
     ]) {
       expect(agents[name]).toBeDefined();
       expect(agents[name]!.mode).toBe("primary");
     }
   });
 
-  it("has the 9 subagents with mode=subagent", () => {
+  it("has the 11 subagents with mode=subagent", () => {
     const subagents = [
       "qa-reviewer",
       "qa-thorough",
@@ -38,6 +35,8 @@ describe("createAgents", () => {
       "docs-maintainer",
       "lib-reader",
       "agents-md-writer",
+      "pilot-builder",
+      "pilot-planner",
     ];
     for (const name of subagents) {
       expect(agents[name]).toBeDefined();
@@ -120,18 +119,18 @@ describe("createAgents", () => {
 describe("pilot agents", () => {
   const agents = createAgents();
 
-  test("pilot-builder is registered with mode=primary", () => {
+  test("pilot-builder is registered with mode=subagent", () => {
     const a = agents["pilot-builder"];
     expect(a).toBeDefined();
-    expect(a!.mode).toBe("primary");
+    expect(a!.mode).toBe("subagent");
     expect(a!.model).toBe("anthropic/claude-sonnet-4-6");
     expect(a!.temperature).toBe(0.1);
   });
 
-  test("pilot-planner is registered with mode=primary", () => {
+  test("pilot-planner is registered with mode=subagent", () => {
     const a = agents["pilot-planner"];
     expect(a).toBeDefined();
-    expect(a!.mode).toBe("primary");
+    expect(a!.mode).toBe("subagent");
     expect(a!.model).toBe("anthropic/claude-opus-4-7");
     expect(a!.temperature).toBe(0.3);
   });
@@ -703,7 +702,7 @@ describe("prompt content assertions", () => {
     );
     // Should instruct delegation to QA reviewer
     expect(prime).toContain(
-      "Do NOT run the full test suite, lint, or typecheck directly in the orchestrator",
+      "Do NOT run the full test suite, lint, or typecheck directly in the PRIME",
     );
   });
 
