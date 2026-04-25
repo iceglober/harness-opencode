@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.0
+
+### Minor Changes
+
+- [#93](https://github.com/iceglober/harness-opencode/pull/93) [`c70f525`](https://github.com/iceglober/harness-opencode/commit/c70f5258788f8bd720b115060c052b9f009e18a5) Thanks [@iceglober](https://github.com/iceglober)! - Add tool-hooks sub-plugin with four context-saving optimizations: output backpressure (truncate successful tool output above threshold, write full to disk), post-edit verification loop (auto-run tsc after TS/JS edits), loop detection (warn after N edits to same file), and read deduplication (skip re-reads of unchanged files). Add context firewall section to orchestrator prompt mandating sub-agent delegation for high-output operations.
+
+### Patch Changes
+
+- [#93](https://github.com/iceglober/harness-opencode/pull/93) [`c70f525`](https://github.com/iceglober/harness-opencode/commit/c70f5258788f8bd720b115060c052b9f009e18a5) Thanks [@iceglober](https://github.com/iceglober)! - Fix OpenCode startup crash caused by unrecognized `harness` top-level key in opencode.json. Move plugin config (model tiers, toolHooks) into the SDK plugin options tuple form. Auto-migrate legacy config on install. Replace readline number-input prompts with @inquirer/prompts (arrow-key select, checkbox, confirm). Fix plugin detection to handle tuple entries in install/uninstall/doctor.
+
 ## 0.11.0
 
 ### Minor Changes
