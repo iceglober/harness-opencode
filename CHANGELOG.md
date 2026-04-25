@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.1
+
+### Patch Changes
+
+- [#85](https://github.com/iceglober/harness-opencode/pull/85) [`a4e5709`](https://github.com/iceglober/harness-opencode/commit/a4e5709abbe24c385d788c4a9598847b2846103d) Thanks [@iceglober](https://github.com/iceglober)! - fix: change CLI shebang from `node` to `bun` to fix ERR_UNSUPPORTED_ESM_URL_SCHEME
+
+  The CLI binary (`dist/cli.js`) used `#!/usr/bin/env node`, causing `bunx` and global installs to spawn Node.js instead of Bun. Node.js cannot resolve `bun:sqlite` imports used by the pilot subsystem, producing `ERR_UNSUPPORTED_ESM_URL_SCHEME` on every CLI invocation — including commands that don't touch SQLite (`install`, `doctor`, etc.) because ESM evaluates all static imports eagerly.
+
 ## 0.10.0
 
 ### Minor Changes
