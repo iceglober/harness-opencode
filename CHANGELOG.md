@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1
+
+### Patch Changes
+
+- [#95](https://github.com/iceglober/harness-opencode/pull/95) [`238cf5c`](https://github.com/iceglober/harness-opencode/commit/238cf5cbb8fbcae12380b25351d5f4930484e6ff) Thanks [@iceglober](https://github.com/iceglober)! - Fix OpenCode startup crash caused by unrecognized `harness` top-level key in opencode.json. Move plugin config (model tiers, toolHooks) into the SDK plugin options tuple form. Auto-migrate legacy config on install. Replace readline number-input prompts with @inquirer/prompts (arrow-key select, checkbox, confirm). Fix plugin detection to handle tuple entries in install/uninstall/doctor.
+
 ## 0.12.0
 
 ### Minor Changes
