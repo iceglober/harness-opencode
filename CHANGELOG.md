@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0
+
+### Minor Changes
+
+- [#99](https://github.com/iceglober/harness-opencode/pull/99) [`0a9e824`](https://github.com/iceglober/harness-opencode/commit/0a9e824b294c84c4ddb6d676db4e4150a1327d59) Thanks [@iceglober](https://github.com/iceglober)! - Add anonymous, opt-out usage telemetry via Aptabase. Tracks tool invocation counts, durations, file extensions, and success/failure rates — no file paths, code, prompts, or identifying information. Disabled automatically in CI and via `HARNESS_OPENCODE_TELEMETRY=0` or `DO_NOT_TRACK=1`.
+
+### Patch Changes
+
+- [#97](https://github.com/iceglober/harness-opencode/pull/97) [`d497c80`](https://github.com/iceglober/harness-opencode/commit/d497c80cd503fd1468301d6541ecec91bb8ecc61) Thanks [@iceglober](https://github.com/iceglober)! - Fix auto-update leaving plugin cache without node_modules. The cache refresh deleted node_modules and assumed OpenCode would reinstall on next start — it doesn't. Now runs `npm install` after rewriting the pin so the new version is immediately available.
+
 ## 0.12.1
 
 ### Patch Changes
