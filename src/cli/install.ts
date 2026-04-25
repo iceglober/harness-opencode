@@ -24,6 +24,12 @@ import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import { mergeConfig, seedConfig } from "./merge-config.js";
 import { promptChoice, promptMulti } from "./plugin-check.js";
+import {
+  readOurPackageVersion,
+  refreshPluginCache,
+  inspectCachePin,
+  getOpenCodeCachePackageDir,
+} from "../auto-update.js";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
 
@@ -116,6 +122,34 @@ function getOpencodeConfigPath(): string {
   const configHome =
     process.env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config");
   return path.join(configHome, "opencode", "opencode.json");
+}
+
+/**
+ * Refresh the OpenCode plugin cache if it exists and is stale.
+ *
+ * The cache at ~/.cache/opencode/packages/@glrs-dev/harness-opencode@latest/
+ * can get stuck with an exact pin to an old version and no node_modules/.
+ * When that happens, the plugin never loads (no code to run), and the
+ * in-plugin auto-update never fires. This function breaks the deadlock
+ * by rewriting the cache pin to match the version we're running as.
+ */
+async function refreshPluginCacheIfStale(): Promise<void> {
+  try {
+    const cacheDir = getOpenCodeCachePackageDir();
+    const pin = await inspectCachePin(cacheDir);
+
+    if (pin.kind !== "exact") return; // no cache, non-exact, or not our package
+
+    const ourVersion = readOurPackageVersion(import.meta.url);
+    if (pin.version === ourVersion) return; // already current
+
+    const result = await refreshPluginCache(pin.version, ourVersion);
+    if (result.outcome === "refreshed") {
+      ok(`Plugin cache updated: ${result.fromVersion} → ${result.toVersion}`);
+    }
+  } catch {
+    // Best-effort — never break install over a cache issue.
+  }
 }
 
 /**
@@ -305,6 +339,14 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
       console.error(`\x1b[31m✗\x1b[0m ${e.message}`);
       process.exit(1);
     }
+  }
+
+  // Ensure the OpenCode plugin cache is up to date. The cache can get
+  // stuck on a stale exact pin (e.g. "0.8.0") with no node_modules/,
+  // which means the plugin never loads and the in-plugin auto-update
+  // never runs — a chicken-and-egg problem. Fix it here.
+  if (!dryRun) {
+    await refreshPluginCacheIfStale();
   }
 
   console.log(`\n${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.\n`);
