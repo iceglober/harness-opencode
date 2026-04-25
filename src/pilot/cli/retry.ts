@@ -23,6 +23,7 @@ import { openStateDb } from "../state/db.js";
 import { markPending, getTask } from "../state/tasks.js";
 import { appendEvent } from "../state/events.js";
 import { runResume } from "./resume.js";
+import { requirePlugin } from "../../cli/plugin-check.js";
 
 export const retryCmd = command({
   name: "retry",
@@ -45,6 +46,7 @@ export const retryCmd = command({
     }),
   },
   handler: async ({ taskId, run, runNow }) => {
+    await requirePlugin();
     const code = await runRetry({ taskId, runId: run, runNow });
     process.exit(code);
   },

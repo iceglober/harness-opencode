@@ -61,6 +61,7 @@ import { headSha } from "../worktree/git.js";
 import { makeScheduler } from "../scheduler/ready-set.js";
 import { runWorker } from "../worker/worker.js";
 import { promises as fs } from "node:fs";
+import { requirePlugin } from "../../cli/plugin-check.js";
 
 // --- Public command --------------------------------------------------------
 
@@ -95,6 +96,7 @@ export const buildCmd = command({
     }),
   },
   handler: async (args) => {
+    await requirePlugin();
     const code = await runBuild(args);
     process.exit(code);
   },

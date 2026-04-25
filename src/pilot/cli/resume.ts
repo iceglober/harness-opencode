@@ -30,6 +30,7 @@ import { appendEvent } from "../state/events.js";
 import { loadPlan } from "../plan/load.js";
 import { executeRun } from "./build.js";
 import { getRunDir } from "../paths.js";
+import { requirePlugin } from "../../cli/plugin-check.js";
 
 export const resumeCmd = command({
   name: "resume",
@@ -42,6 +43,7 @@ export const resumeCmd = command({
     }),
   },
   handler: async ({ run }) => {
+    await requirePlugin();
     const code = await runResume({ runId: run });
     process.exit(code);
   },

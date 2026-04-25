@@ -26,6 +26,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
 import { getPlansDir } from "../paths.js";
+import { requirePlugin } from "../../cli/plugin-check.js";
 
 // --- Constants -------------------------------------------------------------
 
@@ -56,6 +57,7 @@ export const planCmd = command({
     }),
   },
   handler: async ({ input, opencodeBin }) => {
+    await requirePlugin();
     const code = await runPlan({ input, opencodeBin });
     process.exit(code);
   },

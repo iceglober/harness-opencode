@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * @glrs-dev/harness-opencode CLI entry point.
  *
@@ -37,6 +37,7 @@ import { doctor } from "./cli/doctor.js";
 import { planCheck } from "./bin/plan-check.js";
 import { getPlanDir, migratePlans } from "./plan-paths.js";
 import { pilotSubcommand } from "./pilot/cli/index.js";
+import { requirePlugin } from "./cli/plugin-check.js";
 
 const VERSION = "0.1.0";
 
@@ -155,11 +156,33 @@ const planDirCmd = command({
 
 // --- Top-level subcommand tree --------------------------------------------
 
+// `install-plugin` is the canonical name; `install` is kept as a backwards-
+// compatible alias. Both invoke the same handler.
+const installPluginCmd = command({
+  name: "install-plugin",
+  description:
+    'Add "@glrs-dev/harness-opencode" to your opencode.json plugin array.',
+  args: {
+    dryRun: flag({
+      long: "dry-run",
+      description: "Preview changes without writing.",
+    }),
+    pin: flag({
+      long: "pin",
+      description: "Pin to the current exact version (e.g. @0.1.0).",
+    }),
+  },
+  handler: ({ dryRun, pin }) => {
+    install({ dryRun, pin });
+  },
+});
+
 const cli = subcommands({
-  name: "harness-opencode",
+  name: "glrs-oc",
   description: "OpenCode agent harness CLI.",
   version: VERSION,
   cmds: {
+    "install-plugin": installPluginCmd,
     install: installCmd,
     uninstall: uninstallCmd,
     doctor: doctorCmd,
