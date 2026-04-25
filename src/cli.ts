@@ -57,8 +57,8 @@ const installCmd = command({
       description: "Pin to the current exact version (e.g. @0.1.0).",
     }),
   },
-  handler: ({ dryRun, pin }) => {
-    install({ dryRun, pin });
+  handler: async ({ dryRun, pin }) => {
+    await install({ dryRun, pin });
   },
 });
 
@@ -172,8 +172,8 @@ const installPluginCmd = command({
       description: "Pin to the current exact version (e.g. @0.1.0).",
     }),
   },
-  handler: ({ dryRun, pin }) => {
-    install({ dryRun, pin });
+  handler: async ({ dryRun, pin }) => {
+    await install({ dryRun, pin });
   },
 });
 

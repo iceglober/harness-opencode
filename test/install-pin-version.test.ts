@@ -34,7 +34,7 @@ describe("install --pin version sync", () => {
     expect(src).not.toMatch(/const\s+PACKAGE_VERSION\s*=\s*["']\d/);
   });
 
-  it("install({ pin: true, dryRun: true }) logs the live package.json version", () => {
+  it("install({ pin: true, dryRun: true }) logs the live package.json version", async () => {
     const expectedVersion = readPackageVersion();
 
     // Redirect console so dry-run output is capturable.
@@ -52,7 +52,7 @@ describe("install --pin version sync", () => {
     process.env["XDG_CONFIG_HOME"] = tmpHome;
 
     try {
-      install({ pin: true, dryRun: true });
+      await install({ pin: true, dryRun: true });
     } finally {
       console.log = origLog;
       if (prevXdg === undefined) delete process.env["XDG_CONFIG_HOME"];

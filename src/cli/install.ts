@@ -1,9 +1,17 @@
 /**
- * `bunx @glrs-dev/harness-opencode install`
+ * `glrs-oc install-plugin` / `glrs-oc install`
  *
- * Adds "@glrs-dev/harness-opencode" to the user's opencode.json plugin array
- * via non-destructive merge. Preserves all existing plugins and user keys.
- * Writes a .bak.<epoch>-<pid> backup before every mutation.
+ * Interactive plugin installer. When run in a TTY, walks the user through:
+ *   1. Plugin registration (always)
+ *   2. Model provider selection (Anthropic direct, AWS Bedrock, or custom)
+ *   3. MCP server toggles (playwright, linear)
+ *
+ * Non-interactive (no TTY or --non-interactive): registers the plugin
+ * with defaults and skips all prompts.
+ *
+ * Adds configuration to `~/.config/opencode/opencode.json` via non-
+ * destructive merge. Preserves all existing user keys. Writes a
+ * `.bak.<epoch>-<pid>` backup before every mutation.
  */
 
 import * as fs from "node:fs";
@@ -11,23 +19,78 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import { mergeConfig, seedConfig } from "./merge-config.js";
+import { promptChoice, promptMulti } from "./plugin-check.js";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
 
+// --- ANSI helpers ----------------------------------------------------------
+
+const c = {
+  reset: "\x1b[0m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  dim: "\x1b[2m",
+  bold: "\x1b[1m",
+};
+
+const ok = (msg: string) => console.log(`${c.green}✓${c.reset} ${msg}`);
+const info = (msg: string) => console.log(`${c.blue}•${c.reset} ${msg}`);
+const warn = (msg: string) => console.log(`${c.yellow}!${c.reset} ${msg}`);
+
+// --- Model provider presets ------------------------------------------------
+
+interface ModelPreset {
+  label: string;
+  deep: string;
+  mid: string;
+  fast: string;
+}
+
+const MODEL_PRESETS: ModelPreset[] = [
+  {
+    label: "Anthropic API (direct)",
+    deep: "anthropic/claude-opus-4-7",
+    mid: "anthropic/claude-sonnet-4-6",
+    fast: "anthropic/claude-haiku-4-5",
+  },
+  {
+    label: "AWS Bedrock",
+    deep: "bedrock/claude-opus-4",
+    mid: "bedrock/claude-sonnet-4",
+    fast: "bedrock/claude-haiku-4",
+  },
+  {
+    label: "Google Vertex AI",
+    deep: "vertex/claude-opus-4",
+    mid: "vertex/claude-sonnet-4",
+    fast: "vertex/claude-haiku-4",
+  },
+];
+
+// --- MCP toggle definitions ------------------------------------------------
+
+interface McpToggle {
+  name: string;
+  label: string;
+  defaultOn: boolean;
+}
+
+const MCP_TOGGLES: McpToggle[] = [
+  { name: "playwright", label: "Playwright — browser automation", defaultOn: false },
+  { name: "linear", label: "Linear — issue tracker integration", defaultOn: false },
+];
+
+// --- Helpers ---------------------------------------------------------------
+
 /**
- * Read the plugin's version from its package.json. This is the single source
- * of truth — avoids drift between a hardcoded constant and the published
- * version (see: 0.1.0 hardcoded while the package shipped at 0.1.2).
- *
- * At runtime, `install.ts` is bundled into `dist/cli.js`, so package.json
- * sits one directory up. During tests, the source file is loaded directly,
- * so package.json sits two directories up (src/cli/ → repo root).
+ * Read the plugin's version from its package.json.
  */
 function readPackageVersion(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    path.join(here, "..", "package.json"), // dist/cli.js → dist/../package.json
-    path.join(here, "..", "..", "package.json"), // src/cli/install.ts → src/../../package.json
+    path.join(here, "..", "package.json"),
+    path.join(here, "..", "..", "package.json"),
   ];
   for (const candidate of candidates) {
     try {
@@ -51,85 +114,112 @@ function getOpencodeConfigPath(): string {
   return path.join(configHome, "opencode", "opencode.json");
 }
 
-/** Minimal seed config when the user has no opencode.json. */
-function minimalSeedConfig(pluginEntry: string): Record<string, unknown> {
-  return {
-    $schema: "https://opencode.ai/config.json",
-    plugin: [pluginEntry],
-  };
-}
+// --- Install logic ---------------------------------------------------------
 
 export interface InstallOptions {
   dryRun?: boolean;
   pin?: boolean;
+  nonInteractive?: boolean;
 }
 
-export function install(opts: InstallOptions = {}): void {
-  const { dryRun = false, pin = false } = opts;
+export async function install(opts: InstallOptions = {}): Promise<void> {
+  const { dryRun = false, pin = false, nonInteractive = false } = opts;
   const configPath = getOpencodeConfigPath();
   const pluginEntry = pin ? `${PLUGIN_NAME}@${readPackageVersion()}` : PLUGIN_NAME;
+  const interactive = !nonInteractive && process.stdin.isTTY === true;
 
-  const c = {
-    reset: "\x1b[0m",
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    blue: "\x1b[34m",
-    dim: "\x1b[2m",
+  console.log(`\n${c.bold}${c.blue}@glrs-dev/harness-opencode${c.reset} setup\n`);
+
+  // Step 1: Build the config to merge
+  const config: Record<string, unknown> = {
+    $schema: "https://opencode.ai/config.json",
+    plugin: [pluginEntry],
   };
 
-  const ok = (msg: string) => console.log(`${c.green}✓${c.reset} ${msg}`);
-  const info = (msg: string) => console.log(`${c.blue}•${c.reset} ${msg}`);
-  const warn = (msg: string) => console.log(`${c.yellow}!${c.reset} ${msg}`);
+  // Step 2: Model provider (interactive only)
+  if (interactive) {
+    console.log(`${c.dim}Models${c.reset}`);
+    const presetLabels = [...MODEL_PRESETS.map((p) => p.label), "Keep defaults (Anthropic API)"];
+    const choice = await promptChoice(
+      "  Which model provider?",
+      presetLabels,
+      presetLabels.length - 1, // default: keep defaults
+    );
 
-  console.log(`\n${c.blue}Installing ${PLUGIN_NAME}${c.reset}\n`);
+    if (choice < MODEL_PRESETS.length) {
+      const preset = MODEL_PRESETS[choice]!;
+      (config as any).harness = {
+        models: {
+          deep: [preset.deep],
+          mid: [preset.mid],
+          fast: [preset.fast],
+        },
+      };
+      ok(`Models: ${preset.label}`);
+    } else {
+      ok("Models: Anthropic API defaults");
+    }
+    console.log();
+  }
 
-  // Case 1: no opencode.json yet — seed it
+  // Step 3: Optional MCPs (interactive only)
+  if (interactive && MCP_TOGGLES.length > 0) {
+    console.log(`${c.dim}Optional MCP servers (serena, memory, git are always on)${c.reset}`);
+    const selected = await promptMulti(
+      "  Enable additional MCPs?",
+      MCP_TOGGLES.map((t) => ({ label: t.label, defaultOn: t.defaultOn })),
+    );
+
+    if (selected.size > 0) {
+      const mcp: Record<string, unknown> = {};
+      for (const idx of selected) {
+        const toggle = MCP_TOGGLES[idx]!;
+        mcp[toggle.name] = { enabled: true };
+      }
+      (config as any).mcp = mcp;
+
+      const names = [...selected].map((i) => MCP_TOGGLES[i]!.name).join(", ");
+      ok(`MCPs enabled: ${names}`);
+    } else {
+      ok("MCPs: defaults only (serena, memory, git)");
+    }
+    console.log();
+  }
+
+  // Step 4: Write to opencode.json
   if (!fs.existsSync(configPath)) {
     if (dryRun) {
-      info(`[dry-run] Would create ${configPath} with plugin entry "${pluginEntry}"`);
+      info(`[dry-run] Would create ${configPath}`);
+      info(`[dry-run] Config: ${JSON.stringify(config, null, 2)}`);
     } else {
-      seedConfig(minimalSeedConfig(pluginEntry) as any, configPath);
-      ok(`Created ${configPath} with plugin entry "${pluginEntry}"`);
+      seedConfig(config as any, configPath);
+      ok(`Created ${configPath}`);
     }
-    printNextSteps();
-    return;
-  }
-
-  // Case 2: opencode.json exists — merge non-destructively
-  const srcJson = minimalSeedConfig(pluginEntry) as any;
-
-  try {
-    const result = mergeConfig(srcJson, configPath, dryRun);
-
-    if (!result.changed) {
-      ok(`${configPath} already contains "${pluginEntry}" — nothing to do`);
-      for (const w of result.warnings) warn(w);
-    } else {
-      if (dryRun) {
-        info(`[dry-run] Would merge into ${configPath}:`);
-        for (const a of result.additions) info(`  ${a}`);
+  } else {
+    try {
+      const result = mergeConfig(config as any, configPath, dryRun);
+      if (!result.changed) {
+        ok("opencode.json is up to date — nothing to change");
+        for (const w of result.warnings) warn(w);
       } else {
-        ok(`Merged into ${configPath}`);
-        info(`Backup: ${result.bakPath}`);
-        for (const a of result.additions) info(`  ${a}`);
+        if (dryRun) {
+          info(`[dry-run] Would merge into ${configPath}:`);
+          for (const a of result.additions) info(`  ${a}`);
+        } else {
+          ok(`Updated ${configPath}`);
+          info(`Backup: ${result.bakPath}`);
+          for (const a of result.additions) info(`  ${a}`);
+        }
+        for (const w of result.warnings) warn(w);
       }
-      for (const w of result.warnings) warn(w);
+    } catch (e: any) {
+      console.error(`\x1b[31m✗\x1b[0m ${e.message}`);
+      process.exit(1);
     }
-  } catch (e: any) {
-    console.error(`\x1b[31m✗\x1b[0m ${e.message}`);
-    process.exit(1);
   }
 
-  printNextSteps();
-}
-
-function printNextSteps(): void {
+  // Step 5: Next steps
   console.log(`
-Next steps:
-  1. Start OpenCode: opencode
-  2. Agents, commands, tools, and skills load automatically.
-  3. To enable Linear MCP: edit ~/.config/opencode/opencode.json and set "linear".enabled=true.
-  4. To update: bun update @glrs-dev/harness-opencode
-  5. To uninstall: bunx @glrs-dev/harness-opencode uninstall
+${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.
 `);
 }

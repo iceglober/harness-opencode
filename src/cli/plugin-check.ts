@@ -63,6 +63,92 @@ export function promptYesNo(question: string): Promise<boolean> {
 }
 
 /**
+ * Interactive prompt: present numbered choices, return the selected index.
+ * Returns `defaultIndex` for non-TTY or empty input.
+ */
+export function promptChoice(
+  question: string,
+  choices: string[],
+  defaultIndex = 0,
+): Promise<number> {
+  if (!process.stdin.isTTY) return Promise.resolve(defaultIndex);
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  const lines = choices
+    .map((c, i) => `  ${i === defaultIndex ? ">" : " "} ${i + 1}. ${c}`)
+    .join("\n");
+
+  return new Promise((resolve) => {
+    rl.question(`${question}\n${lines}\n  Choice [${defaultIndex + 1}]: `, (answer) => {
+      rl.close();
+      const trimmed = answer.trim();
+      if (trimmed === "") return resolve(defaultIndex);
+      const num = parseInt(trimmed, 10);
+      if (num >= 1 && num <= choices.length) return resolve(num - 1);
+      return resolve(defaultIndex);
+    });
+  });
+}
+
+/**
+ * Interactive prompt: present a list of toggles, return selected indices.
+ * User enters comma-separated numbers or "none" / empty for defaults.
+ */
+export function promptMulti(
+  question: string,
+  choices: { label: string; defaultOn: boolean }[],
+): Promise<Set<number>> {
+  if (!process.stdin.isTTY) {
+    const defaults = new Set<number>();
+    choices.forEach((c, i) => { if (c.defaultOn) defaults.add(i); });
+    return Promise.resolve(defaults);
+  }
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  const lines = choices
+    .map((c, i) => `    ${i + 1}. [${c.defaultOn ? "x" : " "}] ${c.label}`)
+    .join("\n");
+
+  const defaultNums = choices
+    .map((c, i) => c.defaultOn ? String(i + 1) : null)
+    .filter(Boolean)
+    .join(",");
+
+  return new Promise((resolve) => {
+    rl.question(
+      `${question}\n${lines}\n  Enter numbers (comma-separated) or press enter for defaults [${defaultNums || "none"}]: `,
+      (answer) => {
+        rl.close();
+        const trimmed = answer.trim().toLowerCase();
+        if (trimmed === "" || trimmed === "default" || trimmed === "defaults") {
+          const defaults = new Set<number>();
+          choices.forEach((c, i) => { if (c.defaultOn) defaults.add(i); });
+          return resolve(defaults);
+        }
+        if (trimmed === "none" || trimmed === "0") return resolve(new Set());
+        if (trimmed === "all") {
+          return resolve(new Set(choices.map((_, i) => i)));
+        }
+        const selected = new Set<number>();
+        for (const part of trimmed.split(/[,\s]+/)) {
+          const num = parseInt(part, 10);
+          if (num >= 1 && num <= choices.length) selected.add(num - 1);
+        }
+        return resolve(selected);
+      },
+    );
+  });
+}
+
+/**
  * Guard for pilot subcommands. Checks whether the plugin is installed
  * in opencode.json. If not:
  *   - In interactive mode: prompts the user and auto-installs if they say yes.
@@ -102,5 +188,5 @@ export async function requirePlugin(): Promise<void> {
 
   // Dynamic import to avoid circular dependency with install.ts
   const { install } = await import("./install.js");
-  install();
+  await install({ nonInteractive: true });
 }
