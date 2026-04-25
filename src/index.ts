@@ -15,9 +15,6 @@
  */
 
 import type { Plugin, Hooks, PluginOptions } from "@opencode-ai/plugin";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import * as os from "node:os";
 
 // CRITICAL: do NOT add named exports to this file. OpenCode's plugin loader
 // was observed to crash at startup (`TypeError: undefined is not an object
@@ -48,8 +45,6 @@ import telemetryPlugin from "./plugins/telemetry.js";
 
 // ---- Update notification ----
 
-const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
 /**
  * The version we're running as. Read at module load from our own
  * package.json so the release pipeline doesn't have to patch a constant.
@@ -57,31 +52,13 @@ const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
  */
 const BUNDLED_VERSION = readOurPackageVersion(import.meta.url);
 
-function getUpdateCheckStatePath(): string {
-  const cacheHome =
-    process.env["XDG_CACHE_HOME"] ?? path.join(os.homedir(), ".cache");
-  return path.join(
-    cacheHome,
-    "harness-opencode",
-    "update-check.json",
-  );
-}
-
 async function checkForUpdate(client: any): Promise<void> {
   if (process.env["HARNESS_OPENCODE_UPDATE_CHECK"] === "0") return;
 
-  const statePath = getUpdateCheckStatePath();
-
-  // Rate-limit: once per 24h
-  try {
-    const raw = await fs.readFile(statePath, "utf8");
-    const state = JSON.parse(raw) as { last_check_ts: number };
-    if (Date.now() - state.last_check_ts < UPDATE_CHECK_INTERVAL_MS) return;
-  } catch {
-    // No state file yet — proceed
-  }
-
-  // Fetch latest version from npm registry (3s timeout)
+  // Fetch latest version from npm registry (3s timeout).
+  // Runs once per OpenCode process start (plugin init). No file-based rate
+  // limit — one registry hit per launch is negligible and ensures same-day
+  // publishes are picked up immediately on the next session.
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
@@ -94,13 +71,6 @@ async function checkForUpdate(client: any): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as { version?: string };
     const latest = data.version;
-
-    // Write state regardless of whether we notify
-    await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(
-      statePath,
-      JSON.stringify({ last_check_ts: Date.now() }),
-    );
 
     if (latest && latest !== BUNDLED_VERSION) {
       // Attempt to self-heal the OpenCode plugin cache so the next restart
