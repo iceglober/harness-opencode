@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.2
+
+### Patch Changes
+
+- [#103](https://github.com/iceglober/harness-opencode/pull/103) [`0990a03`](https://github.com/iceglober/harness-opencode/commit/0990a0326c3b9b098aab2ce49cd7a1086af8cf55) Thanks [@iceglober](https://github.com/iceglober)! - Add "Reconfigure models?" prompt to installer when models are already configured, so users can update their provider/model selection without hand-editing opencode.json.
+
+- [#105](https://github.com/iceglober/harness-opencode/pull/105) [`f68fa3f`](https://github.com/iceglober/harness-opencode/commit/f68fa3f6d6f301d4dfef18e55438e888a34e298d) Thanks [@iceglober](https://github.com/iceglober)! - Check for plugin updates on every OpenCode session start instead of rate-limiting to once per 24 hours. The file-based rate limit caused same-day publishes to go undetected until the next day, delaying auto-update of the plugin cache.
+
 ## 0.13.1
 
 ### Patch Changes
