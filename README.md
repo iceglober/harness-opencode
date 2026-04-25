@@ -1,51 +1,200 @@
 # @glrs-dev/harness-opencode
 
-An opinionated OpenCode agent harness delivered as a single npm package. Two ways to use it:
+Opinionated agent harness for [OpenCode](https://opencode.ai). Agents, tools, slash commands, and an unattended pilot mode — one package.
 
-| Path | Install | What you get |
-|------|---------|-------------|
-| **Plugin only** | `bunx @glrs-dev/harness-opencode install` | Agents, slash commands, tools, MCPs, and skills in your OpenCode sessions. No CLI needed. |
-| **CLI** | `bun add -g @glrs-dev/harness-opencode` | Everything above, plus the `glrs-oc` command for pilot mode (unattended task execution) and other utilities. |
+## Quick start
 
-Both paths ship in the same package. The CLI path is a superset — it can install the plugin for you (`glrs-oc install-plugin`), and pilot commands will prompt to install the plugin automatically if it's missing.
+### CLI (recommended)
 
----
+```bash
+bun add -g @glrs-dev/harness-opencode
+glrs-oc install-plugin
+opencode
+```
 
-## Path A: Plugin only
+Gives you the full CLI (`glrs-oc`) plus all [plugin features](#what-the-plugin-provides) inside OpenCode.
 
-If you just want the agents and tools inside OpenCode:
+### Plugin only
 
 ```bash
 bunx @glrs-dev/harness-opencode install
 opencode
 ```
 
-Done. The installer adds one entry to `~/.config/opencode/opencode.json`. OpenCode loads the plugin on startup. No global install, no CLI on PATH.
+No global install. All [plugin features](#what-the-plugin-provides) load automatically. You won't have the `glrs-oc` CLI, but pilot commands will offer to install the plugin if you add the CLI later.
 
-### What the plugin provides
+---
 
-- **14 agents** — `orchestrator` (five-phase end-to-end), `plan` (interactive planner), `build` (plan executor), `qa-reviewer`, `qa-thorough`, `plan-reviewer`, `gap-analyzer`, `code-searcher`, `architecture-advisor`, `docs-maintainer`, `lib-reader`, `agents-md-writer`, `pilot-builder`, `pilot-planner`
-- **7 slash commands** — `/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`, `/fresh`, `/costs`
-- **5 custom tools** — `ast_grep`, `tsc_check`, `eslint_check`, `todo_scan`, `comment_check`
-- **5 MCP servers** — `serena` (AST code intel), `memory` (per-repo JSON memory), `git` (structured blame/log). `playwright` and `linear` defined but disabled by default.
-- **5 skill bundles** — `review-plan`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`, `pilot-planning`
-- **4 sub-plugins** — `autopilot` (opt-in completion loop), `notify` (OS notifications), `cost-tracker` (LLM spend tracking), `pilot-plugin` (runtime invariant enforcement)
+## The Glorious workflow
 
-### Customize
+### Interactive (plugin)
 
-**Agents, commands, MCPs:** your `opencode.json` overrides win. To swap the orchestrator model:
+Open OpenCode in any repo. The `orchestrator` agent handles everything end-to-end.
 
-```json
-{
-  "agent": {
-    "orchestrator": {
-      "model": "anthropic/claude-sonnet-4-6"
-    }
-  }
-}
+**Start a task from a ticket:**
+```
+/fresh ENG-1234
+```
+Wipes the worktree, creates a branch from the ticket ref, and begins the five-phase workflow: understand → plan → execute → verify → handoff.
+
+**Start a task from a description:**
+```
+/fresh add rate limiting to the upload endpoint
 ```
 
-**Model tiers:** override all agents in a tier at once via `harness.models`:
+**Go hands-off after the plan looks good:**
+```
+/autopilot ENG-1234
+```
+Runs the full workflow unattended. Stops when all acceptance criteria are checked off. You review, then `/ship`.
+
+**Ship when done:**
+```
+/ship ~/.glorious/opencode/repo/plans/feat-rate-limit.md
+```
+Squashes commits, pushes, opens a PR with the plan as the body.
+
+**Review a PR:**
+```
+/review 87
+```
+Read-only adversarial review. Fetches the diff, runs typecheck/lint, delegates to `@qa-reviewer`, outputs a structured verdict.
+
+**Deep codebase research:**
+```
+/research how does authentication work in this codebase?
+```
+Spawns parallel subagents, synthesizes findings with exact file:line references.
+
+### Unattended (pilot CLI)
+
+For larger work that decomposes into a multi-task DAG. Each task runs in an isolated git worktree with its own verify commands.
+
+```bash
+# Plan interactively — spawns OpenCode TUI with the pilot-planner agent
+glrs-oc pilot plan "Refactor the billing module into separate services"
+
+# Validate the plan (schema, DAG, glob conflicts)
+glrs-oc pilot validate
+
+# Execute — fully unattended, isolated worktrees, topological order
+glrs-oc pilot build
+
+# Check progress
+glrs-oc pilot status
+```
+
+See [Pilot mode](#pilot-mode) for the full command reference.
+
+---
+
+## What the plugin provides
+
+14 agents, 7 slash commands, 5 tools, 5 MCPs, 5 skill bundles, 4 sub-plugins. Details below.
+
+### Agents
+
+| Agent | Tier | Role |
+|-------|------|------|
+| `orchestrator` | deep | Five-phase end-to-end workflow (default agent) |
+| `plan` | deep | Interactive planner with gap analysis and adversarial review |
+| `build` | mid | Plan executor |
+| `qa-reviewer` | mid | Fast adversarial code review |
+| `qa-thorough` | deep | Full-suite adversarial review |
+| `plan-reviewer` | deep | Adversarial plan review |
+| `gap-analyzer` | deep | Identifies gaps in plans |
+| `architecture-advisor` | deep | Architecture guidance |
+| `code-searcher` | fast | Codebase search specialist |
+| `docs-maintainer` | mid | Documentation updates |
+| `lib-reader` | mid | Library/dependency reader |
+| `agents-md-writer` | mid | AGENTS.md generation |
+| `pilot-builder` | mid | Unattended task executor (pilot subsystem) |
+| `pilot-planner` | deep | Decomposes work into pilot.yaml DAGs |
+
+Tiers: **deep** = opus-class, **mid** = sonnet-class, **fast** = haiku-class. Override with [`harness.models`](#model-overrides).
+
+### Slash commands
+
+| Command | What it does |
+|---------|-------------|
+| `/fresh <ref>` | Wipe worktree, branch from ticket or description, start orchestrator |
+| `/autopilot <ref>` | Hands-off orchestrator run; stops when acceptance criteria pass |
+| `/ship <plan>` | Squash, push, open PR |
+| `/review <target>` | Read-only adversarial review (PR#, SHA, branch, or file) |
+| `/research <topic>` | Parallel codebase exploration with file:line citations |
+| `/init-deep` | Generate hierarchical AGENTS.md files |
+| `/costs` | Show running LLM spend totals |
+
+### Tools
+
+`ast_grep` · `tsc_check` · `eslint_check` · `todo_scan` · `comment_check`
+
+### MCP servers
+
+| Server | Status | Backend |
+|--------|--------|---------|
+| `serena` | enabled | AST code intelligence via `uvx` |
+| `memory` | enabled | Per-repo JSON memory |
+| `git` | enabled | Structured blame/log via `uvx` |
+| `playwright` | disabled | Browser automation — enable in opencode.json |
+| `linear` | disabled | Linear issue tracker — enable in opencode.json |
+
+### Sub-plugins
+
+- **autopilot** — idle-nudge loop driver (only activates via `/autopilot`)
+- **notify** — OS notifications when the agent asks a question
+- **cost-tracker** — LLM spend by provider/model at `~/.glorious/opencode/costs.json`
+- **pilot-plugin** — runtime invariant enforcement for pilot agents
+
+### Skills
+
+`review-plan` · `web-design-guidelines` · `vercel-react-best-practices` · `vercel-composition-patterns` · `pilot-planning`
+
+---
+
+## Pilot mode
+
+Runs a `pilot.yaml` task DAG fully unattended. Tasks have dependencies, touch-globs (file ownership), and verify commands. The worker executes them in topological order, each in an isolated git worktree.
+
+**Prerequisites:** `git` >= 2.5, `opencode` on PATH. Plugin must be installed (auto-prompted if missing).
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `glrs-oc pilot plan [input]` | Spawn OpenCode TUI with `pilot-planner`. Input: Linear ID, GitHub URL, or text. |
+| `glrs-oc pilot validate [path]` | Schema + DAG + glob validation. Defaults to newest plan. |
+| `glrs-oc pilot build` | Execute the plan. `--plan <path>`, `--dry-run`, `--filter <id>`. |
+| `glrs-oc pilot status` | Task statuses for the current run. `--run <id>`, `--json`. |
+| `glrs-oc pilot resume` | Continue a partial run. Skips succeeded tasks. |
+| `glrs-oc pilot retry <task>` | Reset one task to pending. `--run-now` to re-execute immediately. |
+| `glrs-oc pilot logs <task>` | Events and verify output for a task. |
+| `glrs-oc pilot worktrees list\|prune` | Manage pilot's git worktrees. |
+| `glrs-oc pilot cost` | Per-task and total LLM cost. `--json`. |
+| `glrs-oc pilot plan-dir` | Print the plans directory path. |
+
+### State storage
+
+```
+~/.glorious/opencode/<repo>/pilot/
+  plans/                  # YAML plans
+  runs/<runId>/
+    state.db              # SQLite (runs, tasks, events)
+    workers/00.jsonl      # structured logs
+  worktrees/<runId>/00/   # isolated git worktree
+```
+
+Repo identity derived from `git rev-parse --git-common-dir` — worktrees of the same repo share state. Override with `$GLORIOUS_PILOT_DIR`.
+
+> **v0.1:** single worker only. `--workers >1` clamps to 1. Parallel scheduling deferred to v0.3+.
+
+---
+
+## Configuration
+
+### Model overrides
+
+Override all agents in a tier, or target specific agents, via `harness.models` in `opencode.json`:
 
 ```json
 {
@@ -53,161 +202,91 @@ Done. The installer adds one entry to `~/.config/opencode/opencode.json`. OpenCo
     "models": {
       "deep": ["bedrock/claude-opus-4"],
       "mid": ["bedrock/claude-sonnet-4"],
-      "fast": ["bedrock/claude-haiku-4"]
+      "fast": ["bedrock/claude-haiku-4"],
+      "orchestrator": ["my-custom-model"]
     }
   }
 }
 ```
 
-Per-agent overrides in `harness.models` win over tier. Direct `agent.<name>.model` overrides in `opencode.json` win over everything.
+**Precedence:** per-agent `harness.models.X` > tier `harness.models.deep` > plugin default. Direct `agent.<name>.model` in opencode.json wins over all.
 
-**Skills:** read-only by design (they live in `node_modules`). To customize, fork the package.
+### Agent/command/MCP overrides
+
+Your opencode.json values win. Example:
+
+```json
+{
+  "agent": {
+    "orchestrator": { "model": "anthropic/claude-sonnet-4-6" }
+  }
+}
+```
+
+### Enabling optional MCPs
+
+```json
+{
+  "mcp": {
+    "playwright": { "enabled": true },
+    "linear": { "enabled": true }
+  }
+}
+```
 
 ---
 
-## Path B: CLI install
-
-If you want pilot mode or the utility commands:
-
-```bash
-bun add -g @glrs-dev/harness-opencode
-```
-
-This puts `glrs-oc` (and `harness-opencode`) on your PATH. You can then install the plugin via the CLI:
-
-```bash
-glrs-oc install-plugin
-```
-
-Or skip that step — pilot commands (`plan`, `build`, `resume`, `retry`) will detect that the plugin is missing and offer to install it for you.
-
-### CLI commands
+## CLI reference
 
 | Command | Description |
 |---------|-------------|
-| `glrs-oc install-plugin` | Register the plugin in opencode.json (same as `bunx ... install`). |
-| `glrs-oc doctor` | Check installation health (OpenCode, plugin, MCPs, git, pilot agents). |
-| `glrs-oc pilot <verb>` | Pilot subsystem — see below. |
-| `glrs-oc plan-dir` | Print the repo-shared plan directory path. |
-| `glrs-oc plan-check <path>` | Parse a plan file's plan-state fence (legacy markdown plans). |
-| `glrs-oc uninstall` | Remove the plugin from opencode.json. |
+| `glrs-oc install-plugin [--pin] [--dry-run]` | Register plugin in opencode.json |
+| `glrs-oc uninstall [--dry-run]` | Remove plugin from opencode.json |
+| `glrs-oc doctor` | Check installation health |
+| `glrs-oc pilot <verb>` | [Pilot mode](#pilot-mode) |
+| `glrs-oc plan-dir` | Print repo-shared plan directory |
+| `glrs-oc plan-check <path>` | Validate legacy markdown plan files |
 
-`install` is kept as an alias for `install-plugin` for backwards compatibility.
-
-### Pilot mode
-
-The pilot subsystem runs a `pilot.yaml` task DAG fully unattended. You define tasks with dependencies, touch-globs, and verify commands; the pilot worker executes them in topological order using isolated git worktrees.
-
-**Prerequisites:** `git` >= 2.5, `opencode` CLI on PATH, plugin installed (auto-prompted if missing).
-
-**Quick start:**
-
-```bash
-# 1. Create a plan interactively (spawns OpenCode TUI with the pilot-planner agent)
-glrs-oc pilot plan "Add user auth with OAuth"
-
-# 2. Validate the plan (schema, DAG cycles, glob conflicts)
-glrs-oc pilot validate
-
-# 3. Run the plan (single worker, isolated worktrees, fully unattended)
-glrs-oc pilot build
-
-# 4. Check progress
-glrs-oc pilot status
-```
-
-**Pilot verbs:**
-
-| Verb | Description |
-|------|-------------|
-| `plan [input]` | Spawn the OpenCode TUI with the `pilot-planner` agent. Input can be a Linear ID, GitHub URL, or text description. |
-| `validate [path]` | Validate a `pilot.yaml` against schema, DAG, and glob rules. Defaults to newest plan. |
-| `build` | Run the pilot worker against a plan. `--plan <path>`, `--dry-run`, `--filter <id>`. |
-| `status` | Print the current run's task statuses. `--run <id>`, `--json`. |
-| `resume` | Continue a partially-completed run. Skips succeeded tasks. |
-| `retry <task-id>` | Reset a single task to pending and optionally re-run. `--run-now`. |
-| `logs <task-id>` | Print events and verify outputs for a task. |
-| `worktrees list\|prune` | List or prune git worktrees managed by pilot. |
-| `cost` | Print per-task and total LLM cost for a run. `--json`. |
-| `plan-dir` | Print the resolved plan directory path (creates if missing). |
-
-**State storage:**
-
-All pilot state lives under `~/.glorious/opencode/<repo>/pilot/`:
-
-```
-pilot/
-  plans/                  # YAML plans (input artifacts)
-  runs/<runId>/
-    state.db              # SQLite (runs, tasks, events)
-    workers/00.jsonl      # per-worker structured logs
-  worktrees/<runId>/00/   # git worktree for task execution
-```
-
-The `<repo>` segment is derived from `git rev-parse --git-common-dir`, so worktrees of the same repo share state. Override with `$GLORIOUS_PILOT_DIR`.
-
-> **v0.1 limitation:** single worker only. `--workers >1` clamps to 1. Multi-worker parallel scheduling is deferred to v0.3+.
+`install` is an alias for `install-plugin`.
 
 ---
 
 ## Maintenance
 
-### Update
-
+**Update:**
 ```bash
-# Global CLI
 bun update -g @glrs-dev/harness-opencode
-
-# Or if using floating semver in opencode.json, OpenCode's internal bun install handles it on startup.
 ```
 
-### Pin to a specific version
+**Pin version:** `glrs-oc install-plugin --pin`
 
+**Rollback:** `npm deprecate @glrs-dev/harness-opencode@<broken> "<reason>"` — then ship a patch.
+
+**Uninstall:**
 ```bash
-glrs-oc install-plugin --pin
+glrs-oc uninstall                           # remove from opencode.json
+bun remove -g @glrs-dev/harness-opencode    # remove CLI
 ```
-
-Injects `"@glrs-dev/harness-opencode@<current-version>"` into your plugin array.
-
-### Rollback a broken release
-
-```bash
-npm deprecate @glrs-dev/harness-opencode@<broken> "<reason>"
-```
-
-Then ship a patch. Users on floating semver auto-recover on next `bun update`.
-
-### Uninstall
-
-```bash
-# Remove plugin from opencode.json
-glrs-oc uninstall
-
-# Remove the global CLI
-bun remove -g @glrs-dev/harness-opencode
-```
-
-## Migrating from the old clone+symlink install
-
-If you were using the previous `install.sh`-based harness, see [docs/migration-from-clone-install.md](docs/migration-from-clone-install.md).
-
-## Privacy
-
-The plugin checks `registry.npmjs.org` once per day for newer versions. No analytics, no telemetry, no identifiers beyond what `fetch()` sends. Opt out: `export HARNESS_OPENCODE_UPDATE_CHECK=0`.
 
 ## Prerequisites
 
 - [OpenCode](https://opencode.ai)
-- `bun` (for plugin installation and CLI)
-- `uvx` (for serena + git MCPs — `brew install uv`)
-- `node`/`npx` (for memory MCP)
-- `git` >= 2.5 (for pilot worktrees)
+- `bun`
+- `uvx` for serena + git MCPs (`brew install uv`)
+- `node`/`npx` for memory MCP
+- `git` >= 2.5 for pilot worktrees
+
+## Privacy
+
+Daily version check against `registry.npmjs.org`. No analytics, no telemetry. Opt out: `HARNESS_OPENCODE_UPDATE_CHECK=0`.
+
+## Migrating from clone+symlink install
+
+See [docs/migration-from-clone-install.md](docs/migration-from-clone-install.md).
 
 ## Contributing
 
-Pull requests welcome. Read [`AGENTS.md`](./AGENTS.md) for plugin architecture, type-surface escape hatches, and the zero-user-filesystem-writes invariant.
-
-All user-visible PRs require a changeset: `bunx changeset` before opening the PR. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Read [`AGENTS.md`](./AGENTS.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md). All user-visible PRs need a changeset (`bunx changeset`).
 
 ## License
 
