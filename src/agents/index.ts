@@ -234,6 +234,7 @@ const CORE_BASH_ALLOW_LIST = {
   "biome *": "allow",
   // Our own CLI — the plan agent and qa-reviewer both call plan-check/plan-dir.
   "bunx @glrs-dev/harness-opencode *": "allow",
+  "glrs-oc *": "allow",
   // GitHub CLI — read-only gh calls are fine; destructive `gh pr merge`
   // is gated at the orchestrator level by human intent (user runs /ship).
   "gh pr view *": "allow",
@@ -308,6 +309,8 @@ const PLAN_PERMISSIONS = {
     "*": "deny",
     "bunx @glrs-dev/harness-opencode plan-dir": "allow",
     "bunx @glrs-dev/harness-opencode plan-dir *": "allow",
+    "glrs-oc plan-dir": "allow",
+    "glrs-oc plan-dir *": "allow",
   },
   webfetch: "allow" as const,
   ast_grep: "deny",
@@ -609,6 +612,12 @@ const PILOT_PLANNER_PERMISSIONS = {
     "bunx @glrs-dev/harness-opencode pilot plan-dir *": "allow",
     "bunx @glrs-dev/harness-opencode plan-dir": "allow",
     "bunx @glrs-dev/harness-opencode plan-dir *": "allow",
+    "glrs-oc pilot validate *": "allow",
+    "glrs-oc pilot validate": "allow",
+    "glrs-oc pilot plan-dir": "allow",
+    "glrs-oc pilot plan-dir *": "allow",
+    "glrs-oc plan-dir": "allow",
+    "glrs-oc plan-dir *": "allow",
   },
   // No webfetch by default — the planner reads tickets via the linear
   // MCP. If the user invokes with a GitHub URL, they need the linear
@@ -627,6 +636,7 @@ const PILOT_PLANNER_PERMISSIONS = {
   playwright: "deny",
   linear: "allow",
 };
+
 
 // ---- Tier map ----
 
