@@ -276,9 +276,24 @@ bun remove -g @glrs-dev/harness-opencode    # remove CLI
 - `node`/`npx` for memory MCP
 - `git` >= 2.5 for pilot worktrees
 
-## Privacy
+## Privacy & Telemetry
 
-Daily version check against `registry.npmjs.org`. No analytics, no telemetry. Opt out: `HARNESS_OPENCODE_UPDATE_CHECK=0`.
+**Update check.** Daily version check against `registry.npmjs.org`. Opt out: `HARNESS_OPENCODE_UPDATE_CHECK=0`.
+
+**Telemetry.** `@glrs-dev/harness-opencode` collects anonymous usage data via [Aptabase](https://aptabase.com) to help improve reliability. The data is opt-out, contains no personal information, and has no stable user identifier — Aptabase tracks anonymous sessions only.
+
+**What gets sent:** package version, OS, Node version, which tools were invoked (hashline, serena, memory, custom tools), tool durations, file extensions of edited files (e.g. `.ts`), edit success/failure outcomes, and hashline mismatch rates.
+
+**What never gets sent:** file paths, file contents, code, prompts, model outputs, error messages, project names, git remotes, usernames, or anything that could identify a user or codebase.
+
+To disable, set any of these in your shell:
+
+```bash
+export HARNESS_OPENCODE_TELEMETRY=0
+export DO_NOT_TRACK=1                   # standard cross-tool opt-out
+```
+
+Telemetry is also automatically disabled when `CI=true`.
 
 ## Migrating from clone+symlink install
 

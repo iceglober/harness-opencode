@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import pkg from "./package.json" with { type: "json" };
 
 // Recursively copy a directory tree
 function copyDir(src: string, dst: string) {
@@ -24,6 +25,9 @@ export default defineConfig({
   format: ["esm"],
   dts: true,
   clean: true,
+  // Bake the package version into the bundle so src/telemetry.ts can
+  // reference it without a runtime require("./package.json").
+  define: { __PKG_VERSION__: JSON.stringify(pkg.version) },
   // Treat markdown files as raw text strings (imported via ?raw)
   loader: {
     ".md": "text",

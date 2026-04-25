@@ -38,12 +38,13 @@ import {
 import { loadDotenv } from "./plugins/dotenv.js";
 
 // Sub-plugins (autopilot idle-nudge loop + OS notifications + cost tracking
-// + pilot subsystem runtime guards + tool output middleware)
+// + pilot subsystem runtime guards + tool output middleware + telemetry)
 import autopilotPlugin from "./plugins/autopilot.js";
 import notifyPlugin from "./plugins/notify.js";
 import costTrackerPlugin from "./plugins/cost-tracker.js";
 import pilotPlugin from "./plugins/pilot-plugin.js";
 import toolHooksPlugin from "./plugins/tool-hooks.js";
+import telemetryPlugin from "./plugins/telemetry.js";
 
 // ---- Update notification ----
 
@@ -165,6 +166,7 @@ const plugin: Plugin = async (input, options) => {
   const costTrackerHooks = await costTrackerPlugin(input);
   const pilotHooks = await pilotPlugin(input);
   const toolHooks = await toolHooksPlugin(input, pluginOptions);
+  const telemetryHooks = await telemetryPlugin(input);
 
   // Merge all hooks.
   //
@@ -195,6 +197,7 @@ const plugin: Plugin = async (input, options) => {
       if (autopilotHooks.event) await autopilotHooks.event(input);
       if (notifyHooks.event) await notifyHooks.event(input);
       if (costTrackerHooks.event) await costTrackerHooks.event(input);
+      if (telemetryHooks.event) await telemetryHooks.event(input);
     },
   };
 
@@ -212,18 +215,33 @@ const plugin: Plugin = async (input, options) => {
       autopilotHooks["experimental.session.compacting"];
   }
 
-  // tool.execute.before — pilot-plugin enforces pilot-builder bash
-  // denies and pilot-planner edit-path scoping. Wrap so the throw the
-  // pilot plugin emits propagates up to opencode's tool runner (which
-  // turns it into a tool-result error visible to the agent).
-  if (pilotHooks["tool.execute.before"] !== undefined) {
-    hooks["tool.execute.before"] = pilotHooks["tool.execute.before"];
+  // tool.execute.before — chain telemetry timing + pilot-plugin enforcement.
+  // Telemetry stamps a Map<callID, startTime> (non-mutating) first, then
+  // pilot enforces builder bash denies and planner edit-path scoping.
+  // If pilot throws, the tool call is denied and telemetry's after hook
+  // won't fire (no orphan cleanup needed — the Map entry just leaks a
+  // few bytes, acceptable for process-lifetime maps).
+  const hasTelemetryBefore = telemetryHooks["tool.execute.before"] !== undefined;
+  const hasPilotBefore = pilotHooks["tool.execute.before"] !== undefined;
+  if (hasTelemetryBefore || hasPilotBefore) {
+    hooks["tool.execute.before"] = async (input, output) => {
+      if (hasTelemetryBefore) await telemetryHooks["tool.execute.before"]!(input, output);
+      if (hasPilotBefore) await pilotHooks["tool.execute.before"]!(input, output);
+    };
   }
 
-  // tool.execute.after — tool-hooks sub-plugin provides backpressure,
-  // post-edit verification, loop detection, and read deduplication.
-  if (toolHooks["tool.execute.after"] !== undefined) {
-    hooks["tool.execute.after"] = toolHooks["tool.execute.after"];
+  // tool.execute.after — chain tool-hooks middleware (backpressure, verify
+  // loop, loop detection, read dedup) + telemetry event emission.
+  // tool-hooks runs first so its output mutations (e.g. backpressure
+  // truncation) are visible to the agent; telemetry runs second and
+  // observes the final output shape.
+  const hasToolHooksAfter = toolHooks["tool.execute.after"] !== undefined;
+  const hasTelemetryAfter = telemetryHooks["tool.execute.after"] !== undefined;
+  if (hasToolHooksAfter || hasTelemetryAfter) {
+    hooks["tool.execute.after"] = async (input, output) => {
+      if (hasToolHooksAfter) await toolHooks["tool.execute.after"]!(input, output);
+      if (hasTelemetryAfter) await telemetryHooks["tool.execute.after"]!(input, output);
+    };
   }
 
   return hooks;
