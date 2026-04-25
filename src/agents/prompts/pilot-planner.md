@@ -4,7 +4,7 @@ description: |
   request into a `pilot.yaml` task DAG that the pilot-builder can
   execute unattended. Uses the `pilot-planning` skill for methodology;
   writes only inside the pilot plans directory.
-mode: primary
+mode: subagent
 model: anthropic/claude-opus-4-7
 temperature: 0.3
 ---

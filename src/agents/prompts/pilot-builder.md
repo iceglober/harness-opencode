@@ -4,7 +4,7 @@ description: |
   time from `pilot build`, makes targeted edits within the declared scope,
   signals readiness for verify. Never commits, never asks questions —
   uses the STOP protocol when blocked.
-mode: primary
+mode: subagent
 model: anthropic/claude-sonnet-4-6
 temperature: 0.1
 ---

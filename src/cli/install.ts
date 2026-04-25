@@ -30,6 +30,7 @@ import {
   inspectCachePin,
   getOpenCodeCachePackageDir,
 } from "../auto-update.js";
+import { fetchProviders, suggestTiers, type CatwalkProvider } from "./catwalk.js";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
 
@@ -50,31 +51,39 @@ const warn = (msg: string) => console.log(`${c.yellow}!${c.reset} ${msg}`);
 
 // --- Model provider presets ------------------------------------------------
 
-interface ModelPreset {
+export interface ModelPreset {
   label: string;
+  providerId: string;
   deep: string;
   mid: string;
   fast: string;
 }
 
-const MODEL_PRESETS: ModelPreset[] = [
+/**
+ * Hardcoded fallback presets — used when the Catwalk API is unreachable.
+ * Model IDs must match the Catwalk registry format: `<provider>/<catwalk-model-id>`.
+ */
+export const MODEL_PRESETS: ModelPreset[] = [
   {
     label: "Anthropic API (direct)",
+    providerId: "anthropic",
     deep: "anthropic/claude-opus-4-7",
     mid: "anthropic/claude-sonnet-4-6",
-    fast: "anthropic/claude-haiku-4-5",
+    fast: "anthropic/claude-haiku-4-5-20251001",
   },
   {
     label: "AWS Bedrock",
-    deep: "bedrock/claude-opus-4",
-    mid: "bedrock/claude-sonnet-4",
-    fast: "bedrock/claude-haiku-4",
+    providerId: "bedrock",
+    deep: "bedrock/anthropic.claude-opus-4-6",
+    mid: "bedrock/anthropic.claude-sonnet-4-6",
+    fast: "bedrock/anthropic.claude-haiku-4-5-20251001-v1:0",
   },
   {
     label: "Google Vertex AI",
-    deep: "vertex/claude-opus-4",
-    mid: "vertex/claude-sonnet-4",
-    fast: "vertex/claude-haiku-4",
+    providerId: "vertexai",
+    deep: "vertexai/claude-opus-4-6@20250610",
+    mid: "vertexai/claude-sonnet-4-6@20250725",
+    fast: "vertexai/claude-haiku-4-5@20251001",
   },
 ];
 
@@ -338,23 +347,81 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
   if (interactive && !hasModels) {
     console.log();
     console.log(`${c.dim}Models${c.reset}`);
-    const presetLabels = [...MODEL_PRESETS.map((p) => p.label), "Keep defaults (Anthropic API)"];
-    const choice = await promptChoice(
-      "  Which model provider?",
-      presetLabels,
-      presetLabels.length - 1,
-    );
 
-    if (choice < MODEL_PRESETS.length) {
-      const preset = MODEL_PRESETS[choice]!;
+    // Try to fetch live providers from Catwalk; fall back to hardcoded presets.
+    info("Fetching available providers…");
+    const catwalkProviders = await fetchProviders();
+
+    let preset: ModelPreset | null = null;
+
+    if (catwalkProviders && catwalkProviders.length > 0) {
+      // Build choices from live Catwalk data.
+      const providerChoices = catwalkProviders.map((p) => p.name);
+      providerChoices.push("Custom (enter model IDs manually)");
+
+      const providerIdx = await promptChoice(
+        "  Which model provider?",
+        providerChoices,
+        0,
+      );
+
+      if (providerIdx < catwalkProviders.length) {
+        const provider = catwalkProviders[providerIdx]!;
+        const suggested = suggestTiers(provider);
+        preset = {
+          label: provider.name,
+          providerId: provider.id,
+          deep: suggested.deep,
+          mid: suggested.mid,
+          fast: suggested.fast,
+        };
+        ok(`Provider: ${provider.name}`);
+        info(`  deep → ${preset.deep}`);
+        info(`  mid  → ${preset.mid}`);
+        info(`  fast → ${preset.fast}`);
+      }
+      // else: custom — preset stays null, handled below
+    } else {
+      // Offline fallback — use hardcoded presets.
+      warn("Could not reach Catwalk API — using built-in presets");
+      const presetLabels = [...MODEL_PRESETS.map((p) => p.label), "Custom (enter model IDs manually)"];
+      const choice = await promptChoice(
+        "  Which model provider?",
+        presetLabels,
+        0,
+      );
+
+      if (choice < MODEL_PRESETS.length) {
+        preset = MODEL_PRESETS[choice]!;
+        ok(`Provider: ${preset.label}`);
+      }
+      // else: custom — preset stays null
+    }
+
+    if (preset) {
       pluginOpts.models = {
         deep: [preset.deep],
         mid: [preset.mid],
         fast: [preset.fast],
       };
-      ok(`Models: ${preset.label}`);
+      ok(`Models configured`);
     } else {
-      ok("Models: Anthropic API defaults");
+      // Custom: ask for each tier manually.
+      info("Enter model IDs in <provider>/<model-id> format (e.g. bedrock/anthropic.claude-opus-4-6)");
+      const { input } = await import("@inquirer/prompts");
+      const deepModel = await input({ message: "  deep (most capable):" });
+      const midModel = await input({ message: "  mid (balanced):" });
+      const fastModel = await input({ message: "  fast (cheapest):" });
+      if (deepModel) {
+        pluginOpts.models = {
+          deep: [deepModel],
+          mid: [midModel || deepModel],
+          fast: [fastModel || midModel || deepModel],
+        };
+        ok("Models: custom");
+      } else {
+        ok("Models: Anthropic API defaults");
+      }
     }
     console.log();
   }

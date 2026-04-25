@@ -732,13 +732,13 @@ export function createAgents(): Record<string, AgentConfig> {
     // temperature field (and we don't want to change that helper for
     // every agent at once — out of scope for F1/F2).
     "pilot-builder": agentFromPrompt(pilotBuilderPrompt, {
-      mode: "primary",
+      mode: "subagent",
       model: "anthropic/claude-sonnet-4-6",
       temperature: 0.1,
       permission: PILOT_BUILDER_PERMISSIONS as AgentConfig["permission"],
     }),
     "pilot-planner": agentFromPrompt(pilotPlannerPrompt, {
-      mode: "primary",
+      mode: "subagent",
       model: "anthropic/claude-opus-4-7",
       temperature: 0.3,
       permission: PILOT_PLANNER_PERMISSIONS as AgentConfig["permission"],
