@@ -6,6 +6,10 @@
  *   2. Model provider selection (Anthropic direct, AWS Bedrock, or custom)
  *   3. MCP server toggles (playwright, linear)
  *
+ * Idempotent: reads the existing config first and only prompts for keys
+ * that aren't already set. Re-running shows a summary of current config
+ * and skips questions whose answers are already in opencode.json.
+ *
  * Non-interactive (no TTY or --non-interactive): registers the plugin
  * with defaults and skips all prompts.
  *
@@ -114,6 +118,51 @@ function getOpencodeConfigPath(): string {
   return path.join(configHome, "opencode", "opencode.json");
 }
 
+/**
+ * Safely read and parse the existing opencode.json, or return null.
+ */
+function readExistingConfig(configPath: string): Record<string, any> | null {
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Detect the current model provider from an existing config's
+ * `harness.models` block, if any. Returns a human-readable label.
+ */
+function detectModelProvider(existing: Record<string, any> | null): string | null {
+  const models = existing?.harness?.models;
+  if (!models) return null;
+
+  const deep = Array.isArray(models.deep) ? models.deep[0] : models.deep;
+  if (typeof deep !== "string") return null;
+
+  for (const preset of MODEL_PRESETS) {
+    if (deep === preset.deep) return preset.label;
+  }
+  return `custom (${deep})`;
+}
+
+/**
+ * Detect which optional MCPs are already configured in the existing config.
+ */
+function detectEnabledMcps(existing: Record<string, any> | null): Set<string> {
+  const enabled = new Set<string>();
+  const mcp = existing?.mcp;
+  if (!mcp || typeof mcp !== "object") return enabled;
+
+  for (const toggle of MCP_TOGGLES) {
+    if (mcp[toggle.name]?.enabled === true) {
+      enabled.add(toggle.name);
+    }
+  }
+  return enabled;
+}
+
 // --- Install logic ---------------------------------------------------------
 
 export interface InstallOptions {
@@ -128,22 +177,56 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
   const pluginEntry = pin ? `${PLUGIN_NAME}@${readPackageVersion()}` : PLUGIN_NAME;
   const interactive = !nonInteractive && process.stdin.isTTY === true;
 
+  // Read existing config to detect what's already configured.
+  const existing = readExistingConfig(configPath);
+  const hasPlugin = existing
+    ? (Array.isArray(existing.plugin) ? existing.plugin : []).some(
+        (p: string) => p === PLUGIN_NAME || String(p).startsWith(`${PLUGIN_NAME}@`),
+      )
+    : false;
+  const existingProvider = detectModelProvider(existing);
+  const existingMcps = detectEnabledMcps(existing);
+  const hasModels = !!existing?.harness?.models;
+
   console.log(`\n${c.bold}${c.blue}@glrs-dev/harness-opencode${c.reset} setup\n`);
 
-  // Step 1: Build the config to merge
+  // Show current state
+  if (hasPlugin) {
+    ok("Plugin already registered");
+  }
+  if (existingProvider) {
+    ok(`Models: ${existingProvider}`);
+  }
+  if (existingMcps.size > 0) {
+    ok(`MCPs: ${[...existingMcps].join(", ")} enabled`);
+  }
+  if (hasPlugin && (existingProvider || hasModels)) {
+    // Everything that can be prompted for is already set.
+    // Check if there are unconfigured MCPs to offer.
+    const unconfiguredMcps = MCP_TOGGLES.filter(
+      (t) => !existingMcps.has(t.name) && !existing?.mcp?.[t.name],
+    );
+    if (unconfiguredMcps.length === 0) {
+      console.log(`\n${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.\n`);
+      return;
+    }
+  }
+
+  // Build the config to merge — always include the plugin entry.
   const config: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
     plugin: [pluginEntry],
   };
 
-  // Step 2: Model provider (interactive only)
-  if (interactive) {
+  // Model provider — only prompt if not already configured.
+  if (interactive && !hasModels) {
+    console.log();
     console.log(`${c.dim}Models${c.reset}`);
     const presetLabels = [...MODEL_PRESETS.map((p) => p.label), "Keep defaults (Anthropic API)"];
     const choice = await promptChoice(
       "  Which model provider?",
       presetLabels,
-      presetLabels.length - 1, // default: keep defaults
+      presetLabels.length - 1,
     );
 
     if (choice < MODEL_PRESETS.length) {
@@ -162,31 +245,37 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
     console.log();
   }
 
-  // Step 3: Optional MCPs (interactive only)
-  if (interactive && MCP_TOGGLES.length > 0) {
-    console.log(`${c.dim}Optional MCP servers (serena, memory, git are always on)${c.reset}`);
-    const selected = await promptMulti(
-      "  Enable additional MCPs?",
-      MCP_TOGGLES.map((t) => ({ label: t.label, defaultOn: t.defaultOn })),
+  // Optional MCPs — only prompt for ones not already configured.
+  if (interactive) {
+    const unconfigured = MCP_TOGGLES.filter(
+      (t) => !existingMcps.has(t.name) && !existing?.mcp?.[t.name],
     );
 
-    if (selected.size > 0) {
-      const mcp: Record<string, unknown> = {};
-      for (const idx of selected) {
-        const toggle = MCP_TOGGLES[idx]!;
-        mcp[toggle.name] = { enabled: true };
-      }
-      (config as any).mcp = mcp;
+    if (unconfigured.length > 0) {
+      console.log(`${c.dim}Optional MCP servers (serena, memory, git are always on)${c.reset}`);
+      const selected = await promptMulti(
+        "  Enable additional MCPs?",
+        unconfigured.map((t) => ({ label: t.label, defaultOn: t.defaultOn })),
+      );
 
-      const names = [...selected].map((i) => MCP_TOGGLES[i]!.name).join(", ");
-      ok(`MCPs enabled: ${names}`);
-    } else {
-      ok("MCPs: defaults only (serena, memory, git)");
+      if (selected.size > 0) {
+        const mcp: Record<string, unknown> = {};
+        for (const idx of selected) {
+          const toggle = unconfigured[idx]!;
+          mcp[toggle.name] = { enabled: true };
+        }
+        (config as any).mcp = mcp;
+
+        const names = [...selected].map((i) => unconfigured[i]!.name).join(", ");
+        ok(`MCPs enabled: ${names}`);
+      } else {
+        ok("MCPs: defaults only");
+      }
+      console.log();
     }
-    console.log();
   }
 
-  // Step 4: Write to opencode.json
+  // Write to opencode.json
   if (!fs.existsSync(configPath)) {
     if (dryRun) {
       info(`[dry-run] Would create ${configPath}`);
@@ -199,7 +288,7 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
     try {
       const result = mergeConfig(config as any, configPath, dryRun);
       if (!result.changed) {
-        ok("opencode.json is up to date — nothing to change");
+        ok("opencode.json is up to date");
         for (const w of result.warnings) warn(w);
       } else {
         if (dryRun) {
@@ -218,8 +307,5 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
     }
   }
 
-  // Step 5: Next steps
-  console.log(`
-${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.
-`);
+  console.log(`\n${c.bold}Ready.${c.reset} Run ${c.green}opencode${c.reset} to start.\n`);
 }
