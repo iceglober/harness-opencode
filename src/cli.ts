@@ -38,6 +38,7 @@ import { planCheck } from "./bin/plan-check.js";
 import { getPlanDir, migratePlans } from "./plan-paths.js";
 import { pilotSubcommand } from "./pilot/cli/index.js";
 import { requirePlugin } from "./cli/plugin-check.js";
+import { startUpdateCheck } from "./cli/cli-update.js";
 
 const VERSION = "0.1.0";
 
@@ -192,14 +193,15 @@ const cli = subcommands({
   },
 });
 
+// Start the update check immediately — the registry fetch runs concurrently
+// with command parsing and execution. The returned callback prints the result
+// (and spawns `bun update -g` for minor/patch) synchronously on process exit,
+// so it works even when command handlers call `process.exit()` directly.
+const printUpdate = startUpdateCheck();
+process.on("exit", printUpdate);
+
 // `binary(cli)` strips Node's `[node, script, ...args]` boilerplate so
 // `process.argv` is rewritten to just user-supplied args before parsing.
-// This matches what `bunx @glrs-dev/harness-opencode <cmd>` callers expect.
-//
-// The `void` is to suppress the floating-promise warning — `run` returns
-// a Promise that resolves after the handler completes; we don't need to
-// await it because handlers either call process.exit themselves OR we
-// let Node's normal exit flow run.
 void run(binary(cli), process.argv);
 
 // Avoid unused-positional import warning. `positional` may be used by
