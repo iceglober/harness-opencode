@@ -29,8 +29,16 @@ export default defineConfig({
     ".md": "text",
     ".sh": "text",
   },
-  // Bundle everything except peer deps
-  external: ["@opencode-ai/plugin", "@opencode-ai/sdk"],
+  // Bundle everything except peer deps and bun's builtin modules. The
+  // pilot subsystem imports `bun:sqlite`, which is a bun-provided
+  // builtin (resolved at runtime); esbuild can't bundle it. Marking it
+  // external preserves the import literal and bun resolves it at runtime.
+  external: [
+    "@opencode-ai/plugin",
+    "@opencode-ai/sdk",
+    "bun:sqlite",
+    "bun:test",
+  ],
   // After build: copy skills tree and bin scripts
   async onSuccess() {
     // Copy skills

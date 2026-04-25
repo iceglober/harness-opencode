@@ -37,10 +37,12 @@ import {
 // config interpolation resolves {env:VAR} references.
 import { loadDotenv } from "./plugins/dotenv.js";
 
-// Sub-plugins (autopilot idle-nudge loop + OS notifications + cost tracking)
+// Sub-plugins (autopilot idle-nudge loop + OS notifications + cost tracking
+// + pilot subsystem runtime guards)
 import autopilotPlugin from "./plugins/autopilot.js";
 import notifyPlugin from "./plugins/notify.js";
 import costTrackerPlugin from "./plugins/cost-tracker.js";
+import pilotPlugin from "./plugins/pilot-plugin.js";
 
 // ---- Update notification ----
 
@@ -154,6 +156,7 @@ const plugin: Plugin = async (input) => {
   const autopilotHooks = await autopilotPlugin(input);
   const notifyHooks = await notifyPlugin(input);
   const costTrackerHooks = await costTrackerPlugin(input);
+  const pilotHooks = await pilotPlugin(input);
 
   // Merge all hooks.
   //
@@ -198,6 +201,14 @@ const plugin: Plugin = async (input) => {
   if (autopilotHooks["experimental.session.compacting"] !== undefined) {
     hooks["experimental.session.compacting"] =
       autopilotHooks["experimental.session.compacting"];
+  }
+
+  // tool.execute.before — pilot-plugin enforces pilot-builder bash
+  // denies and pilot-planner edit-path scoping. Wrap so the throw the
+  // pilot plugin emits propagates up to opencode's tool runner (which
+  // turns it into a tool-result error visible to the agent).
+  if (pilotHooks["tool.execute.before"] !== undefined) {
+    hooks["tool.execute.before"] = pilotHooks["tool.execute.before"];
   }
 
   return hooks;
