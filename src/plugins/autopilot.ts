@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 /**
  * Canonical Ralph loop, hardened. When the user invokes `/autopilot`, the
- * orchestrator runs its normal five-phase workflow on a plan. This plugin
+ * PRIME runs its normal five-phase workflow on a plan. This plugin
  * nudges the session to keep going whenever opencode goes idle before the
  * plan's `## Acceptance criteria` boxes are all checked.
  *
@@ -45,14 +45,14 @@ import { promisify } from "node:util";
  *
  * Important design rule: the plugin never asks the user anything.
  * Circuit breakers are mechanical — a session that can't make progress
- * stops silently. The orchestrator's Phase 5 handoff (or its STOP report)
+ * stops silently. PRIME's Phase 5 handoff (or its STOP report)
  * is the final output the user sees; the plugin respects that.
  */
 
 const STATE_PATH = ".agent/autopilot-state.json";
 const KILL_SWITCH_PATH = ".agent/autopilot-disable";
 const MAX_ITERATIONS = 20;
-const TARGET_AGENTS = new Set(["build", "orchestrator"]);
+const TARGET_AGENTS = new Set(["build", "prime"]);
 const MESSAGE_LIMIT = 40;
 const NUDGE_DEBOUNCE_MS = 30_000;
 const PR_CACHE_MS = 5 * 60 * 1_000; // 5 minutes
@@ -437,7 +437,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       });
       const messages = (msgsResp.data ?? []) as RawMessage[];
 
-      // Only act on build/orchestrator sessions.
+      // Only act on build/prime sessions.
       const agent = latestUserAgent(messages);
       if (!agent || !TARGET_AGENTS.has(agent)) return;
 
@@ -484,7 +484,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       }
 
       // Find the plan. If none referenced yet, nothing to nudge about —
-      // the orchestrator hasn't decided on a plan path yet; wait quietly.
+      // PRIME hasn't decided on a plan path yet; wait quietly.
       const planPath = findPlanPath(messages);
       if (!planPath) return;
 

@@ -109,7 +109,7 @@ describe("HARNESS_OPENCODE_PERM_DEBUG probe", () => {
     expect(qrPerm.bash["sudo *"]).toBe("deny");
   });
 
-  it("perm-debug snapshot includes orchestrator with bash object-form", () => {
+  it("perm-debug snapshot includes prime with bash object-form", () => {
     process.env["HARNESS_OPENCODE_PERM_DEBUG"] = "1";
     const config: any = {};
     applyConfig(config);
@@ -119,8 +119,8 @@ describe("HARNESS_OPENCODE_PERM_DEBUG probe", () => {
         "utf8",
       ),
     );
-    expect(parsed.agents).toContain("orchestrator");
-    const orchPerm = parsed.agentPermissions["orchestrator"];
+    expect(parsed.agents).toContain("prime");
+    const orchPerm = parsed.agentPermissions["prime"];
     expect(typeof orchPerm.bash).toBe("object");
     expect(orchPerm.bash["*"]).toBe("allow");
     expect(orchPerm.bash["git diff *"]).toBe("allow");

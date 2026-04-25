@@ -29,7 +29,7 @@ function readPrompt(name: string): string {
   throw new Error(`Could not find prompt file: ${name}`);
 }
 
-const orchestratorPrompt = readPrompt("orchestrator.md");
+const primePrompt = readPrompt("prime.md");
 const planPrompt = readPrompt("plan.md");
 const buildPrompt = readPrompt("build.md");
 const qaReviewerPrompt = readPrompt("qa-reviewer.md");
@@ -146,7 +146,7 @@ function agentFromPrompt(
 // points (pnpm lint, tail, ls, git status/diff/log/merge-base, etc.).
 // `CORE_DESTRUCTIVE_BASH_DENIES` contains the non-negotiable denies
 // that every agent capable of running bash must carry. Both are
-// shared across qa-reviewer, qa-thorough, orchestrator, and build
+// shared across qa-reviewer, qa-thorough, prime, and build
 // so the shape stays consistent as the allow-list evolves.
 //
 // Prior attempts (`c9a288d`, `3483448`) shipped scalar `bash: "allow"`
@@ -236,7 +236,7 @@ const CORE_BASH_ALLOW_LIST = {
   "bunx @glrs-dev/harness-opencode *": "allow",
   "glrs-oc *": "allow",
   // GitHub CLI — read-only gh calls are fine; destructive `gh pr merge`
-  // is gated at the orchestrator level by human intent (user runs /ship).
+  // is gated at the PRIME level by human intent (user runs /ship).
   "gh pr view *": "allow",
   "gh pr list *": "allow",
   "gh issue view *": "allow",
@@ -268,13 +268,13 @@ const CORE_DESTRUCTIVE_BASH_DENIES = {
   "git push * --force-with-lease*": "allow",
 };
 
-const ORCHESTRATOR_PERMISSIONS = {
+const PRIME_PERMISSIONS = {
   edit: "allow" as const,
   bash: {
     "*": "allow",
     ...CORE_BASH_ALLOW_LIST,
     ...CORE_DESTRUCTIVE_BASH_DENIES,
-    // git clean & git reset --hard are allowed for orchestrator because
+    // git clean & git reset --hard are allowed for prime because
     // /fresh runs them after its own question-tool confirmation gate;
     // a permission-layer prompt on top is redundant noise (see issue #54).
     // BUILD keeps the stricter default (deny/ask).
@@ -332,7 +332,7 @@ const BUILD_PERMISSIONS = {
     "*": "allow",
     ...CORE_BASH_ALLOW_LIST,
     ...CORE_DESTRUCTIVE_BASH_DENIES,
-    // Build is stricter than orchestrator on mutation: no `git clean`
+    // Build is stricter than prime on mutation: no `git clean`
     // (build shouldn't wipe worktree mid-execution), and
     // `git reset --hard` must prompt explicitly.
     "git clean *": "deny",
@@ -362,7 +362,7 @@ const QA_REVIEWER_PERMISSIONS = {
   edit: "deny" as const,
   // Object-form bash: the scalar `"allow"` shape loses to OpenCode's
   // upstream subagent-default `{bash, *, ask}` via last-match-wins (see
-  // the root-cause comment near ORCHESTRATOR_PERMISSIONS). Enumerated
+  // the root-cause comment near PRIME_PERMISSIONS). Enumerated
   // specific patterns in CORE_BASH_ALLOW_LIST sort AFTER the upstream
   // wildcard ask and win for the commands they match. `"*": "allow"`
   // is kept as a backstop but may still lose to the upstream rule for
@@ -531,7 +531,7 @@ const AGENTS_MD_WRITER_PERMISSIONS = {
  * The DESTRUCTIVE_BUILDER_DENIES include all the standard CORE_DESTRUCTIVE
  * patterns plus pilot-specific commit/push/branch operations. Since
  * specific patterns sort AFTER `*: allow` (per the root-cause comment
- * near ORCHESTRATOR_PERMISSIONS), the denies win for the matching commands
+ * near PRIME_PERMISSIONS), the denies win for the matching commands
  * even though we keep `*: allow` for general bash usage.
  *
  * (Phase H1 will add a plugin-layer hook that ALSO denies these — belt
@@ -654,7 +654,7 @@ export type ModelTier = "deep" | "mid" | "fast";
  * the AGENT_TIERS completeness test — that's intentional.
  */
 export const AGENT_TIERS: Record<string, ModelTier> = {
-  orchestrator: "deep",
+  prime: "deep",
   plan: "deep",
   "qa-thorough": "deep",
   "architecture-advisor": "deep",
@@ -675,12 +675,12 @@ export const AGENT_TIERS: Record<string, ModelTier> = {
 export function createAgents(): Record<string, AgentConfig> {
   return {
     // Primary agents
-    orchestrator: agentFromPrompt(orchestratorPrompt, {
-      description: "End-to-end orchestrator. Takes a request from intent to ready-to-ship in one session. Default primary agent.",
+    prime: agentFromPrompt(primePrompt, {
+      description: "End-to-end PRIME (Primary Routing and Intelligence Management Entity). Takes a request from intent to ready-to-ship in one session. Default primary agent.",
       mode: "primary",
       model: "anthropic/claude-opus-4-7",
       temperature: 0.2,
-      permission: ORCHESTRATOR_PERMISSIONS as AgentConfig["permission"],
+      permission: PRIME_PERMISSIONS as AgentConfig["permission"],
     }),
     plan: agentFromPrompt(planPrompt, {
       description: "Interactive planner. Orchestrates gap analysis and adversarial review. Produces a written plan in the repo-shared plan directory (resolve via `bunx @glrs-dev/harness-opencode plan-dir`).",

@@ -1,8 +1,8 @@
 ---
-description: Self-driving orchestrator run. Accepts an issue-tracker reference, a free-form task description, or a question.
+description: Self-driving PRIME run. Accepts an issue-tracker reference, a free-form task description, or a question.
 ---
 
-This invocation is in AUTOPILOT mode. You are the orchestrator, running hands-off: the user invoked `/autopilot` intending to walk away. Work through the normal five-phase workflow (see `orchestrator.md`) until the plan's `## Acceptance criteria` boxes are all checked, then print the Phase 5 handoff and stop. The user runs `/ship` manually — that's the human gate.
+This invocation is in AUTOPILOT mode. You are the PRIME, running hands-off: the user invoked `/autopilot` intending to walk away. Work through the normal five-phase workflow (see `prime.md`) until the plan's `## Acceptance criteria` boxes are all checked, then print the Phase 5 handoff and stop. The user runs `/ship` manually — that's the human gate.
 
 **Activation signal.** The literal phrase `AUTOPILOT mode` above is what the autopilot plugin scans for in the session's FIRST user message. Do not remove the phrase or the plugin will not enable nudges for this session.
 
@@ -37,7 +37,7 @@ The user wants autopilot to process: $ARGUMENTS
 
 ## 0. Workflow-mechanics: decide before anything else
 
-Before classifying the argument, apply the workflow-mechanics heuristic from `orchestrator.md` § `# Workflow-mechanics decisions`. Autopilot is lights-out: the rule fires automatically and silently (single line of chat, no `question` tool). Never ask the user whether to open a fresh worktree, switch branches, or stack on current — the heuristic decides.
+Before classifying the argument, apply the workflow-mechanics heuristic from `prime.md` § `# Workflow-mechanics decisions`. Autopilot is lights-out: the rule fires automatically and silently (single line of chat, no `question` tool). Never ask the user whether to open a fresh worktree, switch branches, or stack on current — the heuristic decides.
 
 Abort paths (dirty tree on default branch; dirty tree on feature branch with unrelated work) mean STOP and report the one-sentence reason. The user resolves and re-runs.
 
@@ -66,9 +66,9 @@ If no probe resolves, report once: *"I see a ref that looks like a ticket (`<arg
 
 Treat the fetched issue's title + description + acceptance criteria as the intent baseline. Map to the plan's `## Acceptance criteria` 1:1, in order. Do not invent entries.
 
-## 3. Run the orchestrator arc
+## 3. Run the PRIME arc
 
-Run the normal five-phase workflow from `orchestrator.md`. Key adaptations for autopilot mode:
+Run the normal five-phase workflow from `prime.md`. Key adaptations for autopilot mode:
 
 - **Phase 1 (Intent).** Already classified; skip redundant classification.
 - **Phase 1.5 (Frame).** Announce the frame as `→ Frame:` and proceed — do NOT use the `question` tool to confirm. The user is walked away.

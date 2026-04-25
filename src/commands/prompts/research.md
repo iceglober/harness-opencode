@@ -8,7 +8,7 @@ Given a topic or question, deeply explore the codebase using subagents to produc
 
 ### Core Principle
 
-You are an **orchestrator only**. You MUST delegate ALL exploration and analysis to subagents. Your role is to:
+You are the **PRIME only**. You MUST delegate ALL exploration and analysis to subagents. Your role is to:
 
 1. Break down the research into discrete tasks
 2. Launch subagents in parallel where possible

@@ -84,7 +84,7 @@ Agent and command prompts are read at runtime via `readFileSync` (not static imp
 - `CORE_BASH_ALLOW_LIST` — ~50 non-destructive command patterns (`ls *`, `tail *`, `pnpm lint *`, `git merge-base *`, `bunx *`, etc.) that cover the reported pain points. Every entry is specific enough to beat the wildcard upstream.
 - `CORE_DESTRUCTIVE_BASH_DENIES` — non-negotiable denies (`rm -rf /*`, `chmod *`, `sudo *`, `git push --force*` + explicit re-allow of `--force-with-lease`). Every bash-capable agent carries these.
 
-Applied to: `orchestrator`, `build`, `qa-reviewer`, `qa-thorough`. Deny-everything agents (`plan-reviewer`, `code-searcher`, `gap-analyzer`, `architecture-advisor`, `lib-reader`) keep `bash: "deny"` scalar — that shape DOES win because `deny` stops evaluation regardless of ordering. `agents-md-writer` keeps `bash: "ask"` scalar since explicit confirmation is the intent.
+Applied to: `prime`, `build`, `qa-reviewer`, `qa-thorough`. Deny-everything agents (`plan-reviewer`, `code-searcher`, `gap-analyzer`, `architecture-advisor`, `lib-reader`) keep `bash: "deny"` scalar — that shape DOES win because `deny` stops evaluation regardless of ordering. `agents-md-writer` keeps `bash: "ask"` scalar since explicit confirmation is the intent.
 
 **Do NOT simplify back to scalar `allow` without reading the logs.** Two prior fixes (commits `c9a288d`, `3483448`) tried the scalar form and shipped regressions. If you're tempted to clean up the enumerated allow-list as "redundant" with `"*": "allow"`, STOP — run the `HARNESS_OPENCODE_PERM_DEBUG=1` probe to capture the live ruleset OpenCode sees, then convince yourself the specific patterns are actually redundant before removing them. They almost certainly aren't.
 
@@ -98,7 +98,7 @@ Payload shape:
 {
   "timestamp": "2026-04-24T...Z",
   "pluginVersion": "0.7.0",
-  "agents": ["orchestrator", "plan", "build", "qa-reviewer", ...],
+  "agents": ["prime", "plan", "build", "qa-reviewer", ...],
   "agentPermissions": {
     "qa-reviewer": { "edit": "deny", "bash": { "*": "allow", "tail *": "allow", ... }, ... },
     ...

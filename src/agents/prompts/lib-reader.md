@@ -35,5 +35,5 @@ Output format:
 
 ## Caveats (if any)
 
-<Anything the orchestrator should know — e.g., "this is from v2.x; project uses v3.x">
+<Anything the PRIME should know — e.g., "this is from v2.x; project uses v3.x">
 ```
