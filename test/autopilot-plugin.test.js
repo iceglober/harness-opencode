@@ -54,7 +54,7 @@ function readStateFile(dir) {
   return JSON.parse(fs.readFileSync(p, "utf8"));
 }
 
-function userMsg(text, agent = "orchestrator") {
+function userMsg(text, agent = "prime") {
   return {
     info: { role: "user", agent },
     parts: [{ type: "text", text }],
@@ -275,7 +275,7 @@ async function loadFactory() {
   return mod.default;
 }
 
-test("session.idle: non-autopilot orchestrator session → zero nudges, no state write", async () => {
+test("session.idle: non-autopilot prime session → zero nudges, no state write", async () => {
   const tmp = mkTmpDir();
   try {
     writeFixture(
@@ -370,7 +370,7 @@ test("session.idle: autopilot session, no plan path yet → no nudge, wait quiet
     assert.equal(
       client.prompts.length,
       0,
-      "no plan ref yet → no nudge; wait for orchestrator to decide",
+      "no plan ref yet → no nudge; wait for prime to decide",
     );
   } finally {
     rmTmpDir(tmp);
@@ -484,7 +484,7 @@ test("chat.message: non-autopilot session → no state write", async () => {
   try {
     const factory = await loadFactory();
     const hooks = await factory({ client: mockClient(), directory: tmp });
-    await hooks["chat.message"]({ sessionID: "s1", agent: "orchestrator" });
+    await hooks["chat.message"]({ sessionID: "s1", agent: "prime" });
     assert.equal(readStateFile(tmp), null);
   } finally {
     rmTmpDir(tmp);
@@ -503,7 +503,7 @@ test("chat.message: autopilot session → iterations reset, enabled preserved", 
     );
     const factory = await loadFactory();
     const hooks = await factory({ client: mockClient(), directory: tmp });
-    await hooks["chat.message"]({ sessionID: "s1", agent: "orchestrator" });
+    await hooks["chat.message"]({ sessionID: "s1", agent: "prime" });
     const st = readStateFile(tmp);
     assert.equal(st.sessions["s1"].iterations, 0);
     assert.ok(st.sessions["s1"].enabled);

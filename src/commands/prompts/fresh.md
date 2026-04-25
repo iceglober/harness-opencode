@@ -1,5 +1,5 @@
 ---
-description: Re-key the current worktree to a new task. Runs the repo's .glorious/hooks/fresh-reset if present+executable; otherwise discards local changes, fetches latest origin, and creates a new branch from it. Then continues inline into the orchestrator on the new task. Assumes long-running worktree model — one terminal tab, one persistent worktree, many tasks over its lifetime.
+description: Re-key the current worktree to a new task. Runs the repo's .glorious/hooks/fresh-reset if present+executable; otherwise discards local changes, fetches latest origin, and creates a new branch from it. Then continues inline into the PRIME on the new task. Assumes long-running worktree model — one terminal tab, one persistent worktree, many tasks over its lifetime.
 ---
 
 User input: $ARGUMENTS
@@ -21,7 +21,7 @@ Before every `question` tool invocation in this command, verify it matches case 
 
 ---
 
-You are re-keying an existing, long-running git worktree to a new unit of work. The worktree itself is not created or destroyed — it's a persistent shell tab owned by the user. Your job is to parse the request, dispatch to the repo's reset strategy (either a committed hook or the built-in default), print a compact summary, and then continue inline into the orchestrator on the new task — all **scoped to this worktree only**. Other worktrees and their running processes must be untouched.
+You are re-keying an existing, long-running git worktree to a new unit of work. The worktree itself is not created or destroyed — it's a persistent shell tab owned by the user. Your job is to parse the request, dispatch to the repo's reset strategy (either a committed hook or the built-in default), print a compact summary, and then continue inline into the PRIME on the new task — all **scoped to this worktree only**. Other worktrees and their running processes must be untouched.
 
 ## Mental model (read this first)
 
@@ -43,11 +43,11 @@ What `/fresh` DOES do, in order:
 5. **Capture state** — `OLD_BRANCH`, unpushed commits.
 6. **Dispatch to the reset strategy** — hook present+executable → hook; otherwise (or `--skip-hook`) → built-in flow.
 7. **Print a compact summary** — **Do NOT tell the user to `cd` — they're already there.**
-8. **Start the orchestrator on the new task immediately** — in the SAME turn, begin the orchestrator arc (Phase 0 → Phase 1 → …) on the user's original request. Do NOT stop after the summary and wait for the user to type "work on it." `/fresh` is "re-key and go," not "re-key and wait."
+8. **Start the PRIME on the new task immediately** — in the SAME turn, begin the PRIME arc (Phase 0 → Phase 1 → …) on the user's original request. Do NOT stop after the summary and wait for the user to type "work on it." `/fresh` is "re-key and go," not "re-key and wait."
 
 ## Architectural principle: who owns what
 
-- **`/fresh` owns the protocol:** argument parsing, safety gates (dirty-tree checks, `--yes` abort semantics, `--no-discard`), `OLD_BRANCH` capture, summary printing, orchestrator kickoff. These are invariants that must be consistent across every repo that uses the harness.
+- **`/fresh` owns the protocol:** argument parsing, safety gates (dirty-tree checks, `--yes` abort semantics, `--no-discard`), `OLD_BRANCH` capture, summary printing, PRIME kickoff. These are invariants that must be consistent across every repo that uses the harness.
 
 - **The reset strategy owns the reset:** discarding working tree, switching branches, cleaning up repo-specific processes/containers, resetting env files. This is project-specific. The built-in flow is the default strategy (sensible for the long-running-worktree model); projects can ship their own at `.glorious/hooks/fresh-reset` if they want different semantics (e.g., "brand new worktree per task," "nuke containers only," "no-op on a bare repo").
 
@@ -69,7 +69,7 @@ Same parsing rules as a typical fresh-worktree command:
   - `--skip-hook` — force the built-in flow even when `.glorious/hooks/fresh-reset` is present+executable. Escape hatch for when you want to bypass the hook (e.g., debugging a broken hook). When no hook is present, this flag is a silent no-op.
   - `--no-discard` — refuse to proceed if the working tree is dirty, instead of discarding. Aborts cleanly with the dirty list. Sanity safety for paranoid users who want a hard gate.
   - `--confirm` — **interactive safety gate**. Before discarding a dirty tree, prompt via the `question` tool with the "what would be lost" list. Without this flag, the default interactive behavior is **wipe without asking** — `/fresh` is the user saying "I want a fresh workspace, don't slow me down with prompts." Use `--confirm` when you're not sure whether your working tree has anything salvageable.
-  - `--yes` — **non-interactive mode**. Assume yes on any confirmation that would normally use the `question` tool. Autopilot and orchestrator pass this when invoking `/fresh` inside a loop. Crucially, `--yes` is STRICTER than interactive default: it aborts on tracked changes or non-gitignored untracked files to protect unattended loops from silent data loss. See § Non-interactive mode below.
+  - `--yes` — **non-interactive mode**. Assume yes on any confirmation that would normally use the `question` tool. Autopilot and PRIME pass this when invoking `/fresh` inside a loop. Crucially, `--yes` is STRICTER than interactive default: it aborts on tracked changes or non-gitignored untracked files to protect unattended loops from silent data loss. See § Non-interactive mode below.
 
 **Design note on the dirty-tree default:** interactive `/fresh` trusts that the human running it has already decided they want the workspace wiped — that's the whole point of running `/fresh`. We do NOT prompt by default. `--confirm` opts into the safety prompt for paranoid runs. `--yes` (autopilot) is stricter because a loop can't recover from mistaken destruction the way a human at the terminal can.
 - **Free text** — first contiguous non-flag substring, used to derive the branch name.
@@ -102,7 +102,7 @@ To detect the tracked-vs-untracked split from `git status --porcelain`:
 - Lines starting with ` M`, `M `, `MM`, `A `, `D `, ` D`, `R `, `C `, `U ` (or any non-`??` prefix) = tracked changes present
 - Lines starting with `??` = untracked; run `git check-ignore --stdin` across them to split gitignored-debris from intentional-new-files
 
-**Why safety gates are owned by `/fresh`, not the hook:** the `question` tool is available only to the orchestrator agent; a bash hook cannot prompt. To keep `--yes` abort semantics deterministic (which autopilot relies on) and interactive-mode confirmations coherent, all dirty-tree gating runs in `/fresh` BEFORE dispatching to either path. The dispatch target (hook or built-in) always runs against a tree that either is clean, is only gitignored debris cleared for `git clean -fdx`, or has been confirmed-for-discard by the user.
+**Why safety gates are owned by `/fresh`, not the hook:** the `question` tool is available only to the PRIME agent; a bash hook cannot prompt. To keep `--yes` abort semantics deterministic (which autopilot relies on) and interactive-mode confirmations coherent, all dirty-tree gating runs in `/fresh` BEFORE dispatching to either path. The dispatch target (hook or built-in) always runs against a tree that either is clean, is only gitignored debris cleared for `git clean -fdx`, or has been confirmed-for-discard by the user.
 
 ## 2. Derive the new branch name
 
@@ -289,19 +289,19 @@ Assemble a compact summary. This is what the human sees.
 Recover previous work: git checkout <OLD_BRANCH>
 ```
 
-**Do NOT print `cd <path>` or "start a new session" or any other "do this next" command.** The user is already in the tab where the work happens. The session continues in place — and immediately continues into §7 (orchestrator kickoff) in the same turn.
+**Do NOT print `cd <path>` or "start a new session" or any other "do this next" command.** The user is already in the tab where the work happens. The session continues in place — and immediately continues into §7 (PRIME kickoff) in the same turn.
 
-## 7. Kick off the orchestrator on the new task (in the SAME turn)
+## 7. Kick off the PRIME on the new task (in the SAME turn)
 
 This is the piece that makes `/fresh` feel like "re-key and go" instead of "re-key and wait." After printing the summary, DO NOT stop and wait for a follow-up message. Continue in the same turn:
 
-1. **Treat the user's original input (plus any tracker context you resolved in §2) as the new orchestrator input** — same as if the user had just typed that request as a fresh prompt.
-2. **Enter the orchestrator arc from the top** — Phase 0 bootstrap probe, then Phase 1 intent classification, then Phase 1.5 framing (substantial requests only), etc.
-3. **Do not re-prompt for confirmation of the task itself.** The user's request is already in hand. In `--confirm` mode you've already gated on discard; in default mode you haven't, but that's fine — the orchestrator's own safety gates (e.g., the Phase 1.5 framing confirmation for low-confidence substantial requests) are the right place for task-level clarifiers, not a `/fresh` meta-prompt.
+1. **Treat the user's original input (plus any tracker context you resolved in §2) as the new PRIME input** — same as if the user had just typed that request as a fresh prompt.
+2. **Enter the PRIME arc from the top** — Phase 0 bootstrap probe, then Phase 1 intent classification, then Phase 1.5 framing (substantial requests only), etc.
+3. **Do not re-prompt for confirmation of the task itself.** The user's request is already in hand. In `--confirm` mode you've already gated on discard; in default mode you haven't, but that's fine — the PRIME's own safety gates (e.g., the Phase 1.5 framing confirmation for low-confidence substantial requests) are the right place for task-level clarifiers, not a `/fresh` meta-prompt.
 
 **Why in the same turn:** the user ran `/fresh <task>` expecting work to start, not a checkpoint. One command, one turn, one uninterrupted transition from old task to new.
 
-**Interaction with `--yes` (autopilot sequence mode):** same behavior. `/fresh --yes <ref>` re-keys and continues inline into the orchestrator arc on the new ref. `/autopilot`'s sequence loop drives the iteration — `/fresh` hands off to the orchestrator in the same turn, the orchestrator runs plan → build → verify → STOP, and the outer `/autopilot` loop pops the next ref.
+**Interaction with `--yes` (autopilot sequence mode):** same behavior. `/fresh --yes <ref>` re-keys and continues inline into the PRIME arc on the new ref. `/autopilot`'s sequence loop drives the iteration — `/fresh` hands off to the PRIME in the same turn, the PRIME runs plan → build → verify → STOP, and the outer `/autopilot` loop pops the next ref.
 
 **Exception — abort paths:** if `/fresh` aborts in §0 (not in a worktree), §1 (empty input), §3 (`--yes` + dirty tracked), or §3 (`--no-discard` + dirty), DO NOT enter §7. The whole point of an abort is that no work should start. Print the abort message and stop.
 
@@ -327,8 +327,8 @@ This is the piece that makes `/fresh` feel like "re-key and go" instead of "re-k
 | 5b (hook) | Hook emits malformed JSON tail | Silent — enrichment is best-effort | Same | Same |
 | 5b (hook) | Hook doesn't change branch (pure-cleanup) | `ACTUAL_BRANCH == OLD_BRANCH`; summary reflects that | Same | Same |
 | 5b (hook) | Hook overrides `NEW_BRANCH` | `ACTUAL_BRANCH` from `git branch --show-current` goes into summary | Same | Same |
-| 7 (orchestrator kickoff) | Reset produced a WARNING status | Continue to §7, but make sure the warning banner is visible to the user before work starts | Same | Same |
-| 7 (orchestrator kickoff) | `/fresh` aborted earlier (no worktree, empty input, --yes + dirty tracked, --no-discard + dirty) | Do NOT enter §7 — print abort message and stop | Same | Same |
+| 7 (PRIME kickoff) | Reset produced a WARNING status | Continue to §7, but make sure the warning banner is visible to the user before work starts | Same | Same |
+| 7 (PRIME kickoff) | `/fresh` aborted earlier (no worktree, empty input, --yes + dirty tracked, --no-discard + dirty) | Do NOT enter §7 — print abort message and stop | Same | Same |
 
 ## Integration with `/autopilot` (sequence-of-issues mode)
 
@@ -344,7 +344,7 @@ When the user runs `/autopilot` with a project / milestone / queue reference, th
 
 - `--yes` suppresses every `question`-tool prompt. Autopilot cannot respond to them.
 - If the working tree has tracked changes or untracked non-gitignored files, `/fresh --yes` aborts. Autopilot treats this as a **hard stop** for the sequence, not "try next issue" — dirty tracked work means something went wrong in the previous iteration that requires human attention. This safety gate is owned by `/fresh`, not the reset strategy, which is what makes `--yes` abort semantics deterministic across repos (a hook cannot override them).
-- On success, `/fresh --yes` continues inline into the orchestrator arc on the new ref (§7). The orchestrator runs plan → build → verify → STOP. Control returns to `/autopilot`'s outer sequence loop, which pops the next ref and calls `/fresh --yes` again.
+- On success, `/fresh --yes` continues inline into the PRIME arc on the new ref (§7). The PRIME runs plan → build → verify → STOP. Control returns to `/autopilot`'s outer sequence loop, which pops the next ref and calls `/fresh --yes` again.
 
 **Sequence-loop shape:**
 
@@ -353,7 +353,7 @@ autopilot queue    →    autopilot pops ref    →    /fresh <ref> --yes    →
                                                                                  - discards tree (via hook or built-in)
                                                                                  - fetches base, checks out new branch
                                                                                  - prints summary
-                                                                                 - CONTINUES INLINE into orchestrator (§7):
+                                                                                 - CONTINUES INLINE into PRIME (§7):
                                                                                    runs Phase 0 → 1 → 1.5 → …
                                                                                    plan → build → verify → STOP
                                                                                autopilot sees acceptance criteria all [x],
@@ -379,4 +379,4 @@ Projects that want the built-in long-running-worktree flow ARE the default; they
 
 ## One-sentence philosophy
 
-`/fresh` is a re-key-and-go protocol with a pluggable reset strategy: it wipes the worktree without friction (the human running `/fresh` has already decided), fetches the fresh base, checks out a new branch, and continues inline into the orchestrator on the new task — one command, one turn, one uninterrupted transition from old task to new. Repos can ship their own reset strategy at `.glorious/hooks/fresh-reset`; `/fresh` owns the invariants (safety gates, summary, orchestrator kickoff) so those remain consistent across every repo that uses the harness.
+`/fresh` is a re-key-and-go protocol with a pluggable reset strategy: it wipes the worktree without friction (the human running `/fresh` has already decided), fetches the fresh base, checks out a new branch, and continues inline into the PRIME on the new task — one command, one turn, one uninterrupted transition from old task to new. Repos can ship their own reset strategy at `.glorious/hooks/fresh-reset`; `/fresh` owns the invariants (safety gates, summary, PRIME kickoff) so those remain consistent across every repo that uses the harness.

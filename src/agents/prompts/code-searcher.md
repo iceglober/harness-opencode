@@ -1,6 +1,6 @@
 ---
 name: code-searcher
-description: Fast codebase exploration. Returns file paths and short snippets. Use when the orchestrator needs to find code without polluting its own context.
+description: Fast codebase exploration. Returns file paths and short snippets. Use when the PRIME needs to find code without polluting its own context.
 mode: subagent
 model: anthropic/claude-haiku-4-5
 temperature: 0.1
@@ -51,4 +51,4 @@ If you find yourself reaching for `grep "^export"` to count exports, STOP — us
 - Never analyze. Just locate.
 - If a search returns more than 30 hits, summarize: "<N> matches across <M> files in <directories>; narrow your query."
 - Prefer one targeted Serena query over many broad greps.
-- If you used grep where Serena would have worked, the orchestrator is entitled to reject your findings and ask you to redo with Serena. Save us both the round-trip.
+- If you used grep where Serena would have worked, the PRIME is entitled to reject your findings and ask you to redo with Serena. Save us both the round-trip.

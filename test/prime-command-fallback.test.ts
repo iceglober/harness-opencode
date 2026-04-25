@@ -1,9 +1,9 @@
 /**
- * Static assertions for the orchestrator's slash-command fallback section.
+ * Static assertions for the PRIME agent's slash-command fallback section.
  *
  * When OpenCode's TUI fails to dispatch a plugin-registered slash command,
- * the raw text (e.g. `/fresh meeting prep`) flows into the orchestrator
- * as a plain user message. The orchestrator prompt carries a fallback
+ * the raw text (e.g. `/fresh meeting prep`) flows into the prime agent
+ * as a plain user message. The prime prompt carries a fallback
  * contract: recognize the command, read the template from the bundled
  * plugin cache, substitute `$ARGUMENTS`, and execute inline.
  *
@@ -25,7 +25,7 @@ const ORCH_PATH = path.join(
   "src",
   "agents",
   "prompts",
-  "orchestrator.md",
+  "prime.md",
 );
 const ORCH = fs.readFileSync(ORCH_PATH, "utf8");
 
@@ -41,7 +41,7 @@ function extractSection(): string {
   return ORCH.slice(start, end);
 }
 
-describe("orchestrator slash-command fallback section", () => {
+describe("prime slash-command fallback section", () => {
   it("section exists", () => {
     expect(ORCH).toContain(SECTION_HEADING);
   });

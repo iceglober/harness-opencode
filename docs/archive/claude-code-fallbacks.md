@@ -20,8 +20,8 @@ All slash commands (`/ship`, `/autopilot`, `/review`, `/init-deep`, `/research`)
 
 ## Primary agents
 
-`orchestrator`, `plan`, and `build` are OpenCode-specific "mode" abstractions (each has its own model, permissions, temperature). Switch between them with Tab in OpenCode.
+`prime`, `plan`, and `build` are OpenCode-specific "mode" abstractions (each has its own model, permissions, temperature). Switch between them with Tab in OpenCode.
 
-Claude Code doesn't have agent modes in the same way, but the corresponding markdown files live at `~/.claude/agents/` and act as delegatable subagents via the Task tool (`@orchestrator`, `@plan`, `@build`). The `orchestrator` prompt is designed to drive a full session end-to-end, so for most Claude Code sessions you just describe what you want and let `@orchestrator` classify + dispatch.
+Claude Code doesn't have agent modes in the same way, but the corresponding markdown files live at `~/.claude/agents/` and act as delegatable subagents via the Task tool (`@prime`, `@plan`, `@build`). The `prime` prompt is designed to drive a full session end-to-end, so for most Claude Code sessions you just describe what you want and let `@prime` classify + dispatch.
 
 No config change needed.

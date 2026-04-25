@@ -65,7 +65,7 @@ export function createCommands(): Record<string, CommandConfig> {
     fresh: {
       template: freshPrompt,
       description:
-        "Re-key the current worktree to a new task. Runs the repo's .glorious/hooks/fresh-reset if present; otherwise discards local changes and creates a new branch from latest origin/<default>. Then continues inline into the orchestrator on the new task.",
+        "Re-key the current worktree to a new task. Runs the repo's .glorious/hooks/fresh-reset if present; otherwise discards local changes and creates a new branch from latest origin/<default>. Then continues inline into the PRIME on the new task.",
     },
     costs: {
       template: costsPrompt,

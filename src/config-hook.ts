@@ -168,7 +168,7 @@ export function applyConfig(config: Config): void {
 
   // Default agent
   if (!(config as any).default_agent) {
-    (config as any).default_agent = "orchestrator";
+    (config as any).default_agent = "prime";
   }
 
   // Permission: global defaults (non-destructive merge, user-wins)
@@ -185,10 +185,10 @@ export function applyConfig(config: Config): void {
   //
   // Destructive-command safety is preserved at two other layers that
   // remain intact:
-  //   1. Each primary agent (orchestrator, build) ships its own
+  //   1. Each primary agent (prime, build) ships its own
   //      object-form bash rule-map with explicit denies for `rm -rf`,
   //      `sudo`, `chmod`, `chown`, `git push --force`, `git push main`,
-  //      etc. See ORCHESTRATOR_PERMISSIONS / BUILD_PERMISSIONS in
+  //      etc. See PRIME_PERMISSIONS / BUILD_PERMISSIONS in
   //      src/agents/index.ts.
   //   2. Every agent's system prompt forbids destructive operations
   //      explicitly. The QA reviewers are read-only by role and would

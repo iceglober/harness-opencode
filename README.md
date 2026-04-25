@@ -29,7 +29,7 @@ No global install. All [plugin features](#what-the-plugin-provides) load automat
 
 ### Interactive (plugin)
 
-Open OpenCode in any repo. The `orchestrator` agent handles everything end-to-end.
+Open OpenCode in any repo. The `prime` agent handles everything end-to-end.
 
 **Start a task from a ticket:**
 ```
@@ -96,7 +96,7 @@ See [Pilot mode](#pilot-mode) for the full command reference.
 
 | Agent | Tier | Role |
 |-------|------|------|
-| `orchestrator` | deep | Five-phase end-to-end workflow (default agent) |
+| `prime` | deep | Five-phase end-to-end workflow (default agent) |
 | `plan` | deep | Interactive planner with gap analysis and adversarial review |
 | `build` | mid | Plan executor |
 | `qa-reviewer` | mid | Fast adversarial code review |
@@ -117,8 +117,8 @@ Tiers: **deep** = opus-class, **mid** = sonnet-class, **fast** = haiku-class. Ov
 
 | Command | What it does |
 |---------|-------------|
-| `/fresh <ref>` | Wipe worktree, branch from ticket or description, start orchestrator |
-| `/autopilot <ref>` | Hands-off orchestrator run; stops when acceptance criteria pass |
+| `/fresh <ref>` | Wipe worktree, branch from ticket or description, start PRIME |
+| `/autopilot <ref>` | Hands-off PRIME run; stops when acceptance criteria pass |
 | `/ship <plan>` | Squash, push, open PR |
 | `/review <target>` | Read-only adversarial review (PR#, SHA, branch, or file) |
 | `/research <topic>` | Parallel codebase exploration with file:line citations |
@@ -203,7 +203,7 @@ Override all agents in a tier, or target specific agents, via `harness.models` i
       "deep": ["bedrock/claude-opus-4"],
       "mid": ["bedrock/claude-sonnet-4"],
       "fast": ["bedrock/claude-haiku-4"],
-      "orchestrator": ["my-custom-model"]
+      "prime": ["my-custom-model"]
     }
   }
 }
@@ -218,7 +218,7 @@ Your opencode.json values win. Example:
 ```json
 {
   "agent": {
-    "orchestrator": { "model": "anthropic/claude-sonnet-4-6" }
+    "prime": { "model": "anthropic/claude-sonnet-4-6" }
   }
 }
 ```

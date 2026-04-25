@@ -33,10 +33,10 @@ describe("AGENT_TIERS", () => {
     expect(deep).toEqual([
       "architecture-advisor",
       "gap-analyzer",
-      "orchestrator",
       "pilot-planner",
       "plan",
       "plan-reviewer",
+      "prime",
       "qa-thorough",
     ]);
     expect(mid).toEqual([
@@ -77,7 +77,7 @@ describe("resolveHarnessModels", () => {
 
     // Deep tier agents
     for (const name of [
-      "orchestrator",
+      "prime",
       "plan",
       "qa-thorough",
       "architecture-advisor",
@@ -108,14 +108,14 @@ describe("resolveHarnessModels", () => {
       harness: {
         models: {
           deep: ["tier-model"],
-          orchestrator: ["agent-model"],
+          prime: ["agent-model"],
         },
       },
     } as any;
 
     resolveHarnessModels(agents as any, config);
 
-    expect(agents["orchestrator"]!.model).toBe("agent-model");
+    expect(agents["prime"]!.model).toBe("agent-model");
     // Other deep agents still get tier model
     expect(agents["plan"]!.model).toBe("tier-model");
   });
@@ -132,7 +132,7 @@ describe("resolveHarnessModels", () => {
 
     resolveHarnessModels(agents as any, config);
 
-    expect(agents["orchestrator"]!.model).toBe("single-string-model");
+    expect(agents["prime"]!.model).toBe("single-string-model");
     expect(agents["plan"]!.model).toBe("single-string-model");
   });
 
@@ -141,14 +141,14 @@ describe("resolveHarnessModels", () => {
     const config = {
       harness: {
         models: {
-          orchestrator: "direct-string",
+          prime: "direct-string",
         },
       },
     } as any;
 
     resolveHarnessModels(agents as any, config);
 
-    expect(agents["orchestrator"]!.model).toBe("direct-string");
+    expect(agents["prime"]!.model).toBe("direct-string");
   });
 
   it("no harness config: all agents keep defaults", () => {
@@ -207,7 +207,7 @@ describe("resolveHarnessModels", () => {
     resolveHarnessModels(agents as any, config);
 
     // Deep agents overridden
-    expect(agents["orchestrator"]!.model).toBe("deep-override");
+    expect(agents["prime"]!.model).toBe("deep-override");
     // Mid agents keep defaults
     expect(agents["build"]!.model).toBe("default-build");
     // Fast agents keep defaults
@@ -226,12 +226,12 @@ describe("resolveHarnessModels", () => {
 
     resolveHarnessModels(agents as any, config);
 
-    expect(agents["orchestrator"]!.model).toBe("primary-model");
+    expect(agents["prime"]!.model).toBe("primary-model");
   });
 });
 
 describe("applyConfig — harness.models integration", () => {
-  it("user-wins: agent.orchestrator.model in config wins over tier resolution", () => {
+  it("user-wins: agent.prime.model in config wins over tier resolution", () => {
     const config: any = {
       harness: {
         models: {
@@ -239,7 +239,7 @@ describe("applyConfig — harness.models integration", () => {
         },
       },
       agent: {
-        orchestrator: {
+        prime: {
           model: "user-direct-model",
           prompt: "user prompt",
           mode: "primary",
@@ -251,7 +251,7 @@ describe("applyConfig — harness.models integration", () => {
 
     // User's direct agent override wins (applied AFTER tier resolution
     // via the user-wins spread).
-    expect(config.agent.orchestrator.model).toBe("user-direct-model");
+    expect(config.agent.prime.model).toBe("user-direct-model");
   });
 
   it("tier resolution applies when no user agent override exists", () => {
@@ -265,7 +265,7 @@ describe("applyConfig — harness.models integration", () => {
 
     applyConfig(config);
 
-    expect(config.agent.orchestrator.model).toBe("bedrock/claude-opus-4");
+    expect(config.agent.prime.model).toBe("bedrock/claude-opus-4");
     expect(config.agent.plan.model).toBe("bedrock/claude-opus-4");
     // Mid/fast agents keep plugin defaults (no tier override specified)
     expect(config.agent.build.model).toBe("anthropic/claude-sonnet-4-6");
@@ -276,7 +276,7 @@ describe("applyConfig — harness.models integration", () => {
 
     applyConfig(config);
 
-    expect(config.agent.orchestrator.model).toBe("anthropic/claude-opus-4-7");
+    expect(config.agent.prime.model).toBe("anthropic/claude-opus-4-7");
     expect(config.agent.build.model).toBe("anthropic/claude-sonnet-4-6");
   });
 });

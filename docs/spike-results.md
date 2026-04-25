@@ -67,18 +67,18 @@ OpenCode's scanner warns "duplicate skill name" in each collision but keeps proc
 
 | # | File | Line | Reference | Rewrite rule |
 |---|---|---|---|---|
-| 1 | `home/.claude/agents/build.md` | 7 | `~/.claude/agents/orchestrator.md → "Workflow-mechanics decisions"` | **WORKFLOW_MECHANICS_RULE template substitution** — extract rule content to `src/agents/shared/workflow-mechanics.md`, inline at plugin init via `{WORKFLOW_MECHANICS_RULE}` placeholder |
+| 1 | `home/.claude/agents/build.md` | 7 | `~/.claude/agents/prime.md → "Workflow-mechanics decisions"` | **WORKFLOW_MECHANICS_RULE template substitution** — extract rule content to `src/agents/shared/workflow-mechanics.md`, inline at plugin init via `{WORKFLOW_MECHANICS_RULE}` placeholder |
 | 2 | `home/.claude/agents/qa-reviewer.md` | 38 | `bash ~/.claude/bin/plan-check.sh --run <plan-path>` | **CLI subcommand rewrite** — replace with `bunx @glrs-dev/harness-opencode plan-check --run <plan-path>` |
 | 3 | `home/.claude/agents/plan-reviewer.md` | 35 | `bash ~/.claude/bin/plan-check.sh --check <plan-path>` | **CLI subcommand rewrite** — `bunx @glrs-dev/harness-opencode plan-check --check <plan-path>` |
-| 4 | `home/.claude/agents/plan.md` | 7 | `~/.claude/agents/orchestrator.md → "Workflow-mechanics decisions"` | **WORKFLOW_MECHANICS_RULE template substitution** (same as #1) |
+| 4 | `home/.claude/agents/plan.md` | 7 | `~/.claude/agents/prime.md → "Workflow-mechanics decisions"` | **WORKFLOW_MECHANICS_RULE template substitution** (same as #1) |
 | 5 | `home/.claude/agents/plan.md` | 110 | `~/.claude/bin/plan-check.sh parses the fence` | **CLI rewrite** — `bunx @glrs-dev/harness-opencode plan-check parses the fence` (prose; no runtime invocation) |
-| 6 | `home/.claude/agents/orchestrator.md` | 29 | `see home/.claude/commands/fresh.md` | **Inline excerpt** — copy the ~10-line "Derive the branch name" subsection from `fresh.md` directly into orchestrator's prompt body |
-| 7 | `home/.claude/agents/orchestrator.md` | 45 | `where <slug> follows the rules in home/.claude/commands/fresh.md § "Derive the branch name"` | **Inline excerpt** (same as #6 — both refs collapse to one inlined copy) |
-| 8 | `home/.claude/agents/orchestrator.md` | 75 | `read ~/.claude/docs/autopilot-mode.md for the 8 autopilot rules` | **Delete cross-reference** — `/autopilot` command's prompt already inlines the rules; orchestrator shouldn't need to fetch them separately. Rewrite to "when invoked via `/autopilot`, the 8 autopilot rules are inlined into your incoming prompt by the command." |
-| 9 | `home/.claude/agents/orchestrator.md` | 219 | `see ~/.claude/docs/autopilot-mode.md § Rule 5 and § Rule 6` | **Inline rule text directly** — Rules 5 and 6 are short (emit `<promise>DONE</promise>`, delegate to verifier). Inline verbatim at the orchestrator's Phase-4→5 transition. |
+| 6 | `home/.claude/agents/prime.md` | 29 | `see home/.claude/commands/fresh.md` | **Inline excerpt** — copy the ~10-line "Derive the branch name" subsection from `fresh.md` directly into prime's prompt body |
+| 7 | `home/.claude/agents/prime.md` | 45 | `where <slug> follows the rules in home/.claude/commands/fresh.md § "Derive the branch name"` | **Inline excerpt** (same as #6 — both refs collapse to one inlined copy) |
+| 8 | `home/.claude/agents/prime.md` | 75 | `read ~/.claude/docs/autopilot-mode.md for the 8 autopilot rules` | **Delete cross-reference** — `/autopilot` command's prompt already inlines the rules; prime shouldn't need to fetch them separately. Rewrite to "when invoked via `/autopilot`, the 8 autopilot rules are inlined into your incoming prompt by the command." |
+| 9 | `home/.claude/agents/prime.md` | 219 | `see ~/.claude/docs/autopilot-mode.md § Rule 5 and § Rule 6` | **Inline rule text directly** — Rules 5 and 6 are short (emit `<promise>DONE</promise>`, delegate to verifier). Inline verbatim at the prime's Phase-4→5 transition. |
 | 10 | `home/.claude/commands/autopilot.md` | 5 | `live at ~/.claude/docs/autopilot-mode.md and are copied verbatim here` | **Rewrite as self-contained** — since `autopilot.md` already has the rules inlined, the reference becomes "(the rules below are the canonical source)." Drop the path reference. |
 | 11 | `home/.claude/commands/autopilot.md` | 68 | `matching guardrail in ~/.claude/commands/autopilot.md: "NEVER commit, push, or open a PR"` | **Self-reference; remove** — the file IS autopilot.md, this is tautological prose. Rewrite to "the hard rule above ('NEVER commit, push, or open a PR')..." |
-| 12 | `home/.claude/commands/autopilot.md` | 80 | `apply the workflow-mechanics heuristic from ~/.claude/agents/orchestrator.md` | **WORKFLOW_MECHANICS_RULE template substitution** (same as #1) |
+| 12 | `home/.claude/commands/autopilot.md` | 80 | `apply the workflow-mechanics heuristic from ~/.claude/agents/prime.md` | **WORKFLOW_MECHANICS_RULE template substitution** (same as #1) |
 | 13 | `home/.claude/commands/autopilot.md` | 166 | `canonical source at ~/.claude/docs/autopilot-mode.md` | **Delete cross-reference** — the rules are already in this file. Rewrite: "(Rule 1 — Question suppression, inlined above)." |
 | 14 | `home/.claude/commands/autopilot.md` | 169 | `The autopilot plugin (~/.config/opencode/plugins/autopilot.ts) will inject...` | **Plugin-name rewrite** — "The autopilot subsystem (bundled in `@glrs-dev/harness-opencode`) will inject..." Drop the file path. |
 | 15 | `home/.claude/docs/autopilot-mode.md` | 62 | same prose as #11 | **File deleted** — content already inlined in autopilot.md's command prompt; this standalone doc is redundant. Plan already commits to deleting it. |
@@ -93,7 +93,7 @@ These are in `home/.config/opencode/AGENTS.md`. The plan commits to rewriting AG
 - Line 64: Claude Code `auto memory at ~/.claude/projects/...` — stays; it's describing Claude Code's native behavior, not ours.
 - Line 67: `~/.claude/agents/` reference for Claude Code users — Phase B scope; remove for Phase A.
 - Lines 75, 76: skill-paired specialist agents — stays; describes the pattern abstractly.
-- Line 87: `~/.claude/agents/orchestrator.md → "Workflow-mechanics decisions"` — **WORKFLOW_MECHANICS_RULE canonical home** moves here too; rewrite AGENTS.md to reference `src/agents/shared/workflow-mechanics.md` as the source.
+- Line 87: `~/.claude/agents/prime.md → "Workflow-mechanics decisions"` — **WORKFLOW_MECHANICS_RULE canonical home** moves here too; rewrite AGENTS.md to reference `src/agents/shared/workflow-mechanics.md` as the source.
 - Line 107: `~/.claude/docs/hashline.md` — **delete reference** (file is being deleted).
 
 ### Stage-0 self-references (4 — acceptable as-is)

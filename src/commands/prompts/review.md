@@ -1,10 +1,10 @@
 ---
-description: Review an existing PR, current branch, staged changes, or a commit range. Orchestrator-driven, read-only, no file edits.
+description: Review an existing PR, current branch, staged changes, or a commit range. PRIME-driven, read-only, no file edits.
 ---
 
 Review target: $ARGUMENTS
 
-You are the orchestrator. This command is **read-only** — you will NOT modify files, run tests in a way that touches the filesystem, commit, push, or edit any plan. You produce a structured review report and stop.
+You are the PRIME. This command is **read-only** — you will NOT modify files, run tests in a way that touches the filesystem, commit, push, or edit any plan. You produce a structured review report and stop.
 
 ## 1. Resolve the target
 

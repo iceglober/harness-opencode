@@ -16,7 +16,7 @@ describe("createAgents", () => {
   it("has 5 primary agents with mode=primary", () => {
     // 3 originals + pilot-planner + pilot-builder
     for (const name of [
-      "orchestrator",
+      "prime",
       "plan",
       "build",
       "pilot-builder",
@@ -59,8 +59,8 @@ describe("createAgents", () => {
     }
   });
 
-  it("orchestrator has correct model and temperature", () => {
-    const orch = agents["orchestrator"]!;
+  it("prime has correct model and temperature", () => {
+    const orch = agents["prime"]!;
     expect(orch.model).toBe("anthropic/claude-opus-4-7");
     expect(orch.temperature).toBe(0.2);
   });
@@ -101,15 +101,15 @@ describe("createAgents", () => {
   it("user-wins precedence: user agent overrides plugin agent", () => {
     // Simulate what src/index.ts does: { ...ourAgents, ...(input.agent ?? {}) }
     const userOverride = {
-      orchestrator: {
+      prime: {
         model: "anthropic/claude-haiku-4-5",
         prompt: "custom prompt",
         mode: "primary" as const,
       },
     };
     const merged = { ...agents, ...userOverride };
-    expect(merged["orchestrator"]!.model).toBe("anthropic/claude-haiku-4-5");
-    expect(merged["orchestrator"]!.prompt).toBe("custom prompt");
+    expect(merged["prime"]!.model).toBe("anthropic/claude-haiku-4-5");
+    expect(merged["prime"]!.prompt).toBe("custom prompt");
     // Other agents unaffected
     expect(merged["plan"]).toEqual(agents["plan"]);
   });
@@ -467,8 +467,8 @@ describe("subagent permissions", () => {
     }
   });
 
-  it("orchestrator bash object-form includes enumerated allow-list", () => {
-    const bash = (agents["orchestrator"] as any).permission.bash;
+  it("prime bash object-form includes enumerated allow-list", () => {
+    const bash = (agents["prime"] as any).permission.bash;
     const mismatches: string[] = [];
     for (const cmd of PAIN_POINT_COMMANDS) {
       const action = evaluateBash(bash, cmd);
@@ -478,13 +478,13 @@ describe("subagent permissions", () => {
     }
     if (mismatches.length > 0) {
       throw new Error(
-        `orchestrator bash map fails to allow pain-point commands:\n${mismatches.join("\n")}`,
+        `prime bash map fails to allow pain-point commands:\n${mismatches.join("\n")}`,
       );
     }
   });
 
-  it("orchestrator bash object-form keeps destructive denies", () => {
-    const bash = (agents["orchestrator"] as any).permission.bash;
+  it("prime bash object-form keeps destructive denies", () => {
+    const bash = (agents["prime"] as any).permission.bash;
     const mismatches: string[] = [];
     for (const cmd of DESTRUCTIVE_COMMANDS) {
       const action = evaluateBash(bash, cmd);
@@ -495,7 +495,7 @@ describe("subagent permissions", () => {
     }
     if (mismatches.length > 0) {
       throw new Error(
-        `orchestrator bash map fails destructive-command check:\n${mismatches.join("\n")}`,
+        `prime bash map fails destructive-command check:\n${mismatches.join("\n")}`,
       );
     }
   });
@@ -524,7 +524,7 @@ describe("subagent permissions", () => {
       const expected = cmd.includes("--force-with-lease") ? "allow" : "deny";
       expect(action).toBe(expected);
     }
-    // Build-specific rules: git clean denied (stricter than orchestrator),
+    // Build-specific rules: git clean denied (stricter than prime),
     // git reset --hard must prompt (ask).
     expect(bash["git clean *"]).toBe("deny");
     expect(bash["git reset --hard*"]).toBe("ask");
@@ -611,7 +611,7 @@ describe("prompt content assertions", () => {
   const agents = createAgents();
   const qaReviewer = agents["qa-reviewer"]!.prompt as string;
   const qaThorough = agents["qa-thorough"]!.prompt as string;
-  const orchestrator = agents["orchestrator"]!.prompt as string;
+  const prime = agents["prime"]!.prompt as string;
 
   // ---- qa-reviewer (fast variant) ----
 
@@ -658,35 +658,35 @@ describe("prompt content assertions", () => {
     expect(qaThorough).not.toContain("trust-recent-green");
   });
 
-  // ---- orchestrator (picker + delegation + pre-existing-failure rule) ----
+  // ---- prime (picker + delegation + pre-existing-failure rule) ----
 
-  it("orchestrator prompt contains qa-fast-vs-thorough heuristic", () => {
-    expect(orchestrator).toContain("@qa-thorough");
-    expect(orchestrator).toContain("@qa-reviewer");
-    expect(orchestrator).toMatch(/>10 files|>500 lines/);
-    expect(orchestrator.toLowerCase()).toContain("risk: high");
-    expect(orchestrator.toLowerCase()).toMatch(
+  it("prime prompt contains qa-fast-vs-thorough heuristic", () => {
+    expect(prime).toContain("@qa-thorough");
+    expect(prime).toContain("@qa-reviewer");
+    expect(prime).toMatch(/>10 files|>500 lines/);
+    expect(prime.toLowerCase()).toContain("risk: high");
+    expect(prime.toLowerCase()).toMatch(
       /auth|security|crypto|billing|migration/,
     );
   });
 
-  it("orchestrator prompt requires session-green summary for qa-reviewer delegation", () => {
-    expect(orchestrator).toContain("tests passed at");
-    expect(orchestrator).toContain("lint passed at");
-    expect(orchestrator).toContain("typecheck passed at");
+  it("prime prompt requires session-green summary for qa-reviewer delegation", () => {
+    expect(prime).toContain("tests passed at");
+    expect(prime).toContain("lint passed at");
+    expect(prime).toContain("typecheck passed at");
   });
 
-  it("orchestrator prompt requires logging pre-existing failures to plan Open questions", () => {
-    expect(orchestrator).toContain("## Open questions");
-    expect(orchestrator.toLowerCase()).toContain("pre-existing failure");
-    expect(orchestrator.toLowerCase()).toContain(
+  it("prime prompt requires logging pre-existing failures to plan Open questions", () => {
+    expect(prime).toContain("## Open questions");
+    expect(prime.toLowerCase()).toContain("pre-existing failure");
+    expect(prime.toLowerCase()).toContain(
       "not introduced by this change",
     );
   });
 
-  it("orchestrator subagent reference lists both qa-reviewer and qa-thorough", () => {
-    expect(orchestrator).toMatch(/- `@qa-reviewer`/);
-    expect(orchestrator).toMatch(/- `@qa-thorough`/);
+  it("prime subagent reference lists both qa-reviewer and qa-thorough", () => {
+    expect(prime).toMatch(/- `@qa-reviewer`/);
+    expect(prime).toMatch(/- `@qa-thorough`/);
   });
 
   // ---- Plan-storage migration regression guards (a7 in the
@@ -712,12 +712,12 @@ describe("prompt content assertions", () => {
     expect(hasResolver).toBe(true);
   });
 
-  it("orchestrator Phase 0 probe references new plan dir (or a shell snippet that resolves it)", () => {
+  it("prime Phase 0 probe references new plan dir (or a shell snippet that resolves it)", () => {
     // Phase 0 bootstrap should probe for plans using the resolver, not
     // the legacy `ls .agent/plans/`.
-    expect(orchestrator).toContain("bunx @glrs-dev/harness-opencode plan-dir");
+    expect(prime).toContain("bunx @glrs-dev/harness-opencode plan-dir");
     // Legacy probe must be gone.
-    expect(orchestrator).not.toContain("ls .agent/plans/");
+    expect(prime).not.toContain("ls .agent/plans/");
   });
 
   it("autopilot command prompt handoff uses <plan-path> or absolute shape, not .agent/plans/<slug>", () => {
@@ -745,10 +745,10 @@ describe("applyConfig — permission.bash behavior", () => {
   //
   // Safety for destructive commands is preserved via:
   //   1. Per-agent object-form bash maps on primary agents that run
-  //      destructive ops (orchestrator, build) — they explicitly deny
+  //      destructive ops (prime, build) — they explicitly deny
   //      `rm -rf /`, `rm -rf ~`, `sudo`, `chmod`, `chown`,
   //      `git push --force`, `git push * main`, `git push * master`.
-  //      Tests for these live in "orchestrator bash deny rules" etc.
+  //      Tests for these live in "prime bash deny rules" etc.
   //   2. Read-only subagents declaring `bash: "deny"` entirely
   //      (plan-reviewer, code-searcher, gap-analyzer, …).
   //   3. Reviewer system prompts that forbid destructive operations
@@ -772,12 +772,12 @@ describe("applyConfig — permission.bash behavior", () => {
     expect(config.permission.bash["*"]).toBe("ask");
   });
 
-  it("orchestrator agent keeps object-form destructive denies (primary-agent safety net)", () => {
-    // The safety net moved from global → orchestrator's own agent config.
+  it("prime agent keeps object-form destructive denies (primary-agent safety net)", () => {
+    // The safety net moved from global → prime's own agent config.
     // Lock in the critical denies here so they can't be removed without
     // touching a test that explicitly names them.
     const agents = createAgents();
-    const bash = (agents["orchestrator"] as any).permission.bash;
+    const bash = (agents["prime"] as any).permission.bash;
     expect(typeof bash).toBe("object");
     expect(bash["*"]).toBe("allow");
     expect(bash["git push --force*"]).toBe("deny");
