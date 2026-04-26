@@ -73,7 +73,7 @@ Run the normal five-phase workflow from `prime.md`. Key adaptations for autopilo
 - **Phase 1 (Intent).** Already classified; skip redundant classification.
 - **Phase 1.5 (Frame).** Announce the frame as `→ Frame:` and proceed — do NOT use the `question` tool to confirm. The user is walked away.
 - **Phase 2 (Plan).** Delegate to `@plan`. For ref-originated requests, cite the issue ID in the plan's `## Goal`. The plan's `## Acceptance criteria` maps 1:1 to the ticket's Changes / Definition of Done list.
-- **Phase 3 (Execute).** File-by-file. Check off acceptance criteria as you go — boxes are the signal both to the user and to the autopilot plugin.
+- **Phase 3 (Execute).** Delegate to `@build`. `@build` executes file-by-file and returns a summary; PRIME relays progress. Acceptance boxes get checked during `@build`'s execution.
 - **Phase 4 (Verify).** Full suite pass + `@qa-reviewer` → iterate to `[PASS]`. No sentinel tokens.
 - **Phase 5 (Handoff).** Print "Done. Run `/ship <plan-path>` when ready." and stop.
 

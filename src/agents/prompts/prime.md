@@ -260,29 +260,29 @@ For reference (you do NOT write this — `@plan` does), the plan file follows th
 
 ## Phase 3: Execute
 
-Before starting, validate the plan's structure (applies even to your own plan):
-- `## Acceptance criteria` section exists with at least one `- [ ]` checkbox
-- `## File-level changes` section exists with at least one entry
+For substantial work (a plan exists), you do NOT execute the plan yourself. Delegate to `@build` via the task tool. `@build` is Sonnet-class (or whatever mid-tier model the user has configured — Kimi K2, GLM-4.6, Haiku, etc.) and is optimized for exactly this work: reading a plan, editing files file-by-file, running per-file `tsc_check`/`eslint_check`, checking acceptance boxes, committing locally. Phase 3 is mechanical — judgement-heavy work belongs in Phase 1.5 framing and Phase 2 planning, both of which PRIME already owns.
 
-If either is missing, STOP and fix the plan before executing.
+### How to delegate
 
-Before editing any file longer than ~200 lines, run `comment_check` scoped to that file to surface existing `@TODO`/`@FIXME`/`@HACK`. Either resolve them as part of your work, or note in the plan's progress that you're leaving them.
+Pass a single `prompt` to `@build` containing the absolute plan path and nothing else structural — `@build` reads the plan itself. Example prompt shape:
 
-For each item in the plan's `## File-level changes`:
+> Execute the plan at `<absolute-plan-path>`. Return with (a) commit SHAs from `git log --oneline <base>..HEAD`, (b) any plan mutations you made (threshold bumps, scope expansions under the 2-file limit), (c) pre-existing failures encountered and logged to the plan's `## Open questions`, (d) any STOP condition that requires me to re-dispatch. Do NOT invoke `@qa-reviewer` — I own QA dispatch in Phase 4.
 
-1. Make the change.
-2. After each non-trivial change, run lint and tests for the affected files. Use `tsc_check` for type correctness and `eslint_check` for lint-only passes when the full suite is too slow.
-3. If a test fails, fix it before moving on.
-4. Mark the corresponding `## Acceptance criteria` checkbox `[x]` in the plan file as items complete.
+### On `@build`'s return
 
-When you discover the plan is wrong:
-- **Cosmetic / self-imposed numeric thresholds** (line-count budgets, row caps, string-length targets, arbitrary "< N" limits you set yourself in the plan) — just update the threshold in the plan file, note it in the commit message, and keep going. Do NOT stop. Do NOT ask. The user doesn't care whether a file is 238 or 258 lines; they care whether the work is done.
-- **Approach / design change** (e.g., "the interface I planned doesn't exist, I need to refactor the dependency", "this test strategy won't work and the whole §4 structure needs rethinking") — STOP, report the discrepancy with specifics, and ask: "Should I update the plan and continue, or do you want to revise it manually?"
-- **Scope expansion** (work that isn't in `## File-level changes` but is needed to finish the item) — add a bullet to `## File-level changes`, note in the commit. Ask only if the expansion is > ~2 files or changes the plan's `## Goal`.
+1. **Validate the diff matches the plan.** Run `git diff --stat <base>..HEAD` and confirm the file list matches the plan's `## File-level changes`. If `@build` touched files outside the plan without a justification in its return payload, that's scope drift — investigate before proceeding.
+2. **Handle `@build`'s STOP payloads.** `@build` STOPs (instead of completing) when it hits ambiguity that requires user input. Classify the blocker:
+   - **Cosmetic / self-imposed numeric threshold** (line-count budgets, row caps, arbitrary "< N" limits `@build` set on itself): this should never reach you — `@build`'s prompt tells it to silently update and keep going. If it does reach you, update the plan and re-dispatch.
+   - **Approach / design change** (the interface doesn't exist, the test strategy won't work, §4 needs restructuring): ask the user via the `question` tool whether to update the plan or revise manually. Re-dispatch once resolved.
+   - **Scope expansion beyond ~2 files**: ask the user whether to accept the expansion (and update the plan's `## File-level changes`) or revise the plan to split the work.
+3. **Verify pre-existing-failure logging.** If `@build` reports hitting a pre-existing test failure, confirm the plan's `## Open questions` was updated with the `Pre-existing failure confirmed in <file>::<test-name>...` bullet (see the hard rule below). If `@build` forgot to update the plan, either ask `@build` to amend or add the bullet yourself before proceeding.
+4. **Acceptance boxes.** `@build` checks them as it goes. Spot-check that they match the completed work before Phase 4.
 
-Rule of thumb: the user delegated the plan to you. Treat your own metrics as revisable; treat the user's goals as fixed.
+Then proceed to Phase 4 (QA delegation).
 
-For trivial work (Phase 1 decided no plan): just make the change, run lint/tests on the touched file, and proceed to Phase 4.
+### Trivial-work carve-out (no plan)
+
+For trivial work (Phase 1 decided no plan): do NOT delegate to `@build` — there's nothing for it to read. PRIME edits the file directly, runs lint/tests on the touched file, and proceeds to Phase 4. `@build` is a plan-reader by design; delegating without a plan is wasted overhead.
 
 ## Phase 4: Verify
 
@@ -346,6 +346,7 @@ The PRIME's context window is expensive (Opus). Protect it by delegating anythin
 
 | Operation | Delegate to | Why |
 |---|---|---|
+| Phase 3 plan execution (any multi-file edit against a plan) | `@build` | Phase 3 is mechanical — Sonnet/Kimi/GLM can do it; Opus time is expensive |
 | Codebase search expected to return > 10 files | `@code-searcher` | Search dumps flood context |
 | Full test suite (`bun test`, `npm test`, etc.) | `@build` or QA reviewer | Thousands of lines of passing tests is pure noise |
 | Full build / typecheck on large projects | `@build` or QA reviewer | Build logs are verbose on success |
@@ -364,6 +365,7 @@ The PRIME's context window is expensive (Opus). Protect it by delegating anythin
 # Subagent reference (recap)
 
 - `@plan` — writes the plan under the repo-shared plan directory (resolves via `bunx @glrs-dev/harness-opencode plan-dir`; absolute path returned) and runs its own gap-analysis + adversarial-review loop. PRIME delegates Phase 2 plan authoring here.
+- `@build` — executes a written plan file-by-file. Runs per-file lint/tests inline, checks acceptance boxes, commits locally. Returns a structured payload with commit SHAs, plan mutations, and any STOP conditions. PRIME delegates Phase 3 execution here.
 - `@code-searcher` — fast codebase grep + structural search, returns paths and short snippets
 - `@lib-reader` — local-only docs/library lookups (node_modules, type defs, project docs)
 - `@qa-reviewer` — fast adversarial reviewer (Sonnet). Trusts the PRIME's recent green output within this session, focuses on semantic + scope checks. Default for Phase 4.

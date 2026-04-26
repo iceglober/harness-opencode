@@ -684,14 +684,14 @@ export function createAgents(): Record<string, AgentConfig> {
     }),
     plan: agentFromPrompt(planPrompt, {
       description: "Interactive planner. Orchestrates gap analysis and adversarial review. Produces a written plan in the repo-shared plan directory (resolve via `bunx @glrs-dev/harness-opencode plan-dir`).",
-      mode: "primary",
+      mode: "all",
       model: "anthropic/claude-opus-4-7",
       temperature: 0.3,
       permission: PLAN_PERMISSIONS as AgentConfig["permission"],
     }),
     build: agentFromPrompt(buildPrompt, {
       description: "Executes a written plan. Runs tests inline, gates completion on QA review.",
-      mode: "primary",
+      mode: "all",
       model: "anthropic/claude-sonnet-4-6",
       temperature: 0.1,
       permission: BUILD_PERMISSIONS as AgentConfig["permission"],
