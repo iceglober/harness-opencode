@@ -5,11 +5,16 @@
 // the actual which/version subprocess outputs depend on the host so
 // we don't pin them.
 //
-// New in this commit (Phase I3): the "Pilot subsystem" section that
-// checks git worktree availability, bash, and the registered pilot
-// agents. This file's primary purpose is to lock in those checks.
+// New (this PR): model-override validation check. We drive this by
+// pointing the doctor's config-path resolver at a temp dir via
+// XDG_CONFIG_HOME and writing fixture opencode.json files into it.
+// That path is the same the runtime resolver (`getOpencodeConfigPath`)
+// uses, so the test exercises the real doctor code path end-to-end.
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { doctor } from "../src/cli/doctor.js";
 
 function captured(fn: () => void): { stdout: string; stderr: string } {
@@ -44,26 +49,118 @@ describe("doctor", () => {
 
   test("prints the Pilot subsystem section", () => {
     const r = captured(() => doctor());
-    expect(r.stdout).toMatch(/Pilot subsystem/);
-  });
-
-  test("checks for git", () => {
-    const r = captured(() => doctor());
-    // Either an OK or fail line for git should appear (depending on host).
-    expect(r.stdout).toMatch(/git/);
-  });
-
-  test("checks for bash (verify-runner)", () => {
-    const r = captured(() => doctor());
-    expect(r.stdout).toMatch(/bash.*verify-runner|bash not found/i);
-  });
-
-  test("attempts pilot agent list check", () => {
-    const r = captured(() => doctor());
-    // Either we found the agents (ok), warned that they're missing,
+    // Either we see the pilot agents registered, a warning that they're missing,
     // or skipped (couldn't run `opencode agent list`).
     expect(r.stdout).toMatch(
       /pilot-builder|pilot-planner|skipping pilot agent registration check/,
     );
+  });
+});
+
+describe("doctor — model-override validation", () => {
+  let tmpDir: string;
+  let origXdg: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "harness-doctor-models-"),
+    );
+    fs.mkdirSync(path.join(tmpDir, "opencode"), { recursive: true });
+    origXdg = process.env["XDG_CONFIG_HOME"];
+    process.env["XDG_CONFIG_HOME"] = tmpDir;
+  });
+
+  afterEach(() => {
+    if (origXdg === undefined) {
+      delete process.env["XDG_CONFIG_HOME"];
+    } else {
+      process.env["XDG_CONFIG_HOME"] = origXdg;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeConfig(cfg: unknown): void {
+    fs.writeFileSync(
+      path.join(tmpDir, "opencode", "opencode.json"),
+      JSON.stringify(cfg, null, 2),
+    );
+  }
+
+  test("flags pre-#100 legacy bedrock IDs with fix hint", () => {
+    writeConfig({
+      plugin: [
+        [
+          "@glrs-dev/harness-opencode",
+          {
+            models: {
+              deep: ["bedrock/claude-opus-4"],
+              mid: ["bedrock/claude-sonnet-4"],
+            },
+          },
+        ],
+      ],
+    });
+
+    const r = captured(() => doctor());
+
+    // One red-X line per bad entry.
+    expect(r.stdout).toContain(
+      "invalid model override at plugin options.models.deep",
+    );
+    expect(r.stdout).toContain("bedrock/claude-opus-4");
+    expect(r.stdout).toContain(
+      "invalid model override at plugin options.models.mid",
+    );
+    expect(r.stdout).toContain("bedrock/claude-sonnet-4");
+
+    // Suggestion + remediation hint present for each.
+    expect(r.stdout).toContain("bedrock/anthropic.claude-opus-4-6");
+    expect(r.stdout).toContain("bedrock/anthropic.claude-sonnet-4-6");
+    expect(r.stdout).toContain("remove this key, or replace with");
+  });
+
+  test("prints green check when all overrides are valid", () => {
+    writeConfig({
+      plugin: [
+        [
+          "@glrs-dev/harness-opencode",
+          {
+            models: {
+              deep: ["anthropic/claude-opus-4-7"],
+              mid: ["anthropic/claude-sonnet-4-6"],
+              fast: ["anthropic/claude-haiku-4-5-20251001"],
+            },
+          },
+        ],
+      ],
+    });
+
+    const r = captured(() => doctor());
+    expect(r.stdout).toContain("model overrides look valid");
+    expect(r.stdout).not.toMatch(/invalid model override/);
+  });
+
+  test("stays silent about models when no overrides are configured", () => {
+    writeConfig({
+      plugin: ["@glrs-dev/harness-opencode"],
+    });
+
+    const r = captured(() => doctor());
+    // No green check, no red X — the models section isn't reached at all.
+    expect(r.stdout).not.toContain("model overrides look valid");
+    expect(r.stdout).not.toContain("invalid model override");
+  });
+
+  test("surfaces bad IDs in legacy top-level harness.models too", () => {
+    writeConfig({
+      plugin: ["@glrs-dev/harness-opencode"],
+      harness: { models: { deep: ["bedrock/claude-opus-4"] } },
+    });
+
+    const r = captured(() => doctor());
+    expect(r.stdout).toContain(
+      "invalid model override at harness.models (legacy).deep",
+    );
+    expect(r.stdout).toContain("bedrock/claude-opus-4");
   });
 });

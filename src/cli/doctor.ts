@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
+import { validateModelOverride } from "../model-validator.js";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
 
@@ -58,14 +59,85 @@ export function doctor(): void {
     try {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       const plugins: unknown[] = Array.isArray(config.plugin) ? config.plugin : [];
+      let pluginOptions: Record<string, unknown> | null = null;
       const hasPlugin = plugins.some((p) => {
-        const name = typeof p === "string" ? p : Array.isArray(p) ? p[0] : null;
-        return name === PLUGIN_NAME || String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+        if (typeof p === "string") {
+          return p === PLUGIN_NAME || p.startsWith(`${PLUGIN_NAME}@`);
+        }
+        if (Array.isArray(p)) {
+          const [name, opts] = p as [unknown, unknown];
+          const match =
+            name === PLUGIN_NAME ||
+            String(name ?? "").startsWith(`${PLUGIN_NAME}@`);
+          if (match && opts && typeof opts === "object") {
+            pluginOptions = opts as Record<string, unknown>;
+          }
+          return match;
+        }
+        return false;
       });
       if (hasPlugin) {
         ok(`"${PLUGIN_NAME}" present in opencode.json plugin array`);
       } else {
         warn(`"${PLUGIN_NAME}" NOT in opencode.json plugin array — run: bunx ${PLUGIN_NAME} install`);
+      }
+
+      // 2b. Validate any model overrides the user has configured.
+      // Sources, in precedence order: plugin-tuple options.models, legacy
+      // top-level config.harness.models. We walk both so a stale legacy
+      // config is still surfaced.
+      const modelSources: Array<{ label: string; block: unknown }> = [];
+      if (pluginOptions && typeof (pluginOptions as { models?: unknown }).models === "object") {
+        modelSources.push({
+          label: "plugin options.models",
+          block: (pluginOptions as { models: unknown }).models,
+        });
+      }
+      const legacyHarness = (config as { harness?: { models?: unknown } }).harness;
+      if (legacyHarness && typeof legacyHarness.models === "object") {
+        modelSources.push({
+          label: "harness.models (legacy)",
+          block: legacyHarness.models,
+        });
+      }
+
+      if (modelSources.length > 0) {
+        const invalid: Array<{ keyPath: string; value: string; suggestion?: string; reason?: string }> = [];
+        for (const { label, block } of modelSources) {
+          if (!block || typeof block !== "object") continue;
+          for (const [key, rawValue] of Object.entries(block as Record<string, unknown>)) {
+            const candidate: unknown = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+            if (typeof candidate !== "string") continue;
+            const result = validateModelOverride(candidate);
+            if (!result.valid) {
+              invalid.push({
+                keyPath: `${label}.${key}`,
+                value: candidate,
+                suggestion: result.suggestion,
+                reason: result.reason,
+              });
+            }
+          }
+        }
+        if (invalid.length === 0) {
+          ok("model overrides look valid");
+        } else {
+          for (const entry of invalid) {
+            fail(`invalid model override at ${entry.keyPath}: "${entry.value}"`);
+            if (entry.reason) {
+              console.log(`    ${c.yellow}reason:${c.reset} ${entry.reason}`);
+            }
+            if (entry.suggestion) {
+              console.log(
+                `    ${c.yellow}fix:${c.reset}    remove this key, or replace with \`${entry.suggestion}\``,
+              );
+            } else {
+              console.log(
+                `    ${c.yellow}fix:${c.reset}    remove this key, or run \`bunx ${PLUGIN_NAME} install\` to pick a current preset`,
+              );
+            }
+          }
+        }
       }
     } catch {
       fail(`opencode.json at ${configPath} has invalid JSON`);

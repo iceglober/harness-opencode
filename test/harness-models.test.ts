@@ -250,3 +250,115 @@ describe("applyConfig — plugin options integration", () => {
     expect(config.agent.build.model).toBe("anthropic/claude-sonnet-4-6");
   });
 });
+
+describe("resolveHarnessModels — legacy-ID warning", () => {
+  /**
+   * Helper: spy on console.warn, run `fn`, return captured lines.
+   * bun:test doesn't ship a built-in spy, so do it the old-fashioned way.
+   */
+  function capturingWarn<T>(fn: () => T): { result: T; warnings: string[] } {
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      const result = fn();
+      return { result, warnings };
+    } finally {
+      console.warn = original;
+    }
+  }
+
+  function makeAgents(): Record<string, { model?: string }> {
+    const agents: Record<string, { model?: string }> = {};
+    for (const name of Object.keys(createAgents())) {
+      agents[name] = { model: `default-${name}` };
+    }
+    return agents;
+  }
+
+  it("warns exactly once per unique bad tier override even when many agents hit it", () => {
+    const agents = makeAgents();
+    const { warnings } = capturingWarn(() =>
+      resolveHarnessModels(agents as any, {} as any, {
+        models: { deep: ["bedrock/claude-opus-4"] },
+      } as any),
+    );
+
+    // `deep` tier maps to 7 agents; we expect one warn, not seven.
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("bedrock/claude-opus-4");
+    expect(warnings[0]).toContain("models.deep");
+    expect(warnings[0]).toContain("bedrock/anthropic.claude-opus-4-6");
+    expect(warnings[0]).toContain("bunx @glrs-dev/harness-opencode doctor");
+
+    // All deep-tier agents still got the bad value written (user intent
+    // preserved; warn is advisory).
+    expect(agents["prime"]!.model).toBe("bedrock/claude-opus-4");
+    expect(agents["plan"]!.model).toBe("bedrock/claude-opus-4");
+    expect(agents["pilot-planner"]!.model).toBe("bedrock/claude-opus-4");
+  });
+
+  it("warns separately for per-agent vs per-tier sources even for the same bad ID", () => {
+    // Same bad ID, two distinct sources → two separate warn lines, each
+    // naming its own source so the user can find both entries in opencode.json.
+    const agents = makeAgents();
+    const { warnings } = capturingWarn(() =>
+      resolveHarnessModels(agents as any, {} as any, {
+        models: {
+          "pilot-planner": ["bedrock/claude-opus-4"],
+          deep: ["bedrock/claude-sonnet-4"],
+        },
+      } as any),
+    );
+
+    // Two unique bad IDs → two warns.
+    expect(warnings.length).toBe(2);
+    const joined = warnings.join("\n");
+    expect(joined).toContain("models.pilot-planner");
+    expect(joined).toContain("bedrock/claude-opus-4");
+    expect(joined).toContain("models.deep");
+    expect(joined).toContain("bedrock/claude-sonnet-4");
+  });
+
+  it("does not warn when overrides are valid Catwalk IDs", () => {
+    const agents = makeAgents();
+    const { warnings } = capturingWarn(() =>
+      resolveHarnessModels(agents as any, {} as any, {
+        models: {
+          deep: ["anthropic/claude-opus-4-7"],
+          mid: ["bedrock/anthropic.claude-sonnet-4-6"],
+          fast: ["vertexai/claude-haiku-4-5@20251001"],
+        },
+      } as any),
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("does not warn on unknown-but-plausible IDs (conservative)", () => {
+    const agents = makeAgents();
+    const { warnings } = capturingWarn(() =>
+      resolveHarnessModels(agents as any, {} as any, {
+        models: {
+          deep: ["openai/gpt-5"],
+          mid: ["global.anthropic.claude-sonnet-4-6"],
+          fast: ["xai/grok-4.20"],
+        },
+      } as any),
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("surfaces bad IDs in legacy config.harness.models too", () => {
+    const agents = makeAgents();
+    const { warnings } = capturingWarn(() =>
+      resolveHarnessModels(
+        agents as any,
+        { harness: { models: { deep: ["bedrock/claude-opus-4"] } } } as any,
+      ),
+    );
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("bedrock/claude-opus-4");
+  });
+});

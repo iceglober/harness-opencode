@@ -35,6 +35,10 @@ import { createCommands } from "./commands/index.js";
 import { createMcpConfig } from "./mcp/index.js";
 import { getSkillsRoot } from "./skills/paths.js";
 import { readOurPackageVersion } from "./auto-update.js";
+import {
+  validateModelOverride,
+  formatModelOverrideWarning,
+} from "./model-validator.js";
 
 /**
  * Diagnostic probe — dumps every agent's final `permission` block to
@@ -120,11 +124,28 @@ export function resolveHarnessModels(
     | undefined;
   if (!modelsConfig) return agents;
 
+  // Dedupe warnings within a single resolve call — one bad tier
+  // override can hit many agents; the user wants to see each bad
+  // value once, not N times.
+  const warnedIds = new Set<string>();
+  const warnIfInvalid = (value: string, source: string) => {
+    const result = validateModelOverride(value);
+    if (result.valid) return;
+    if (warnedIds.has(value)) return;
+    warnedIds.add(value);
+    // Emit to stderr so it stays visible even when stdout is captured.
+    // Using console.warn (which writes to stderr) keeps formatting
+    // consistent with other plugin-startup diagnostics.
+    console.warn(formatModelOverrideWarning(value, source, result.suggestion));
+  };
+
   for (const [agentName, agentCfg] of Object.entries(agents)) {
     // 1. Per-agent override
     const perAgent = modelsConfig[agentName];
     if (perAgent !== undefined) {
-      agentCfg.model = Array.isArray(perAgent) ? perAgent[0] : perAgent;
+      const picked = Array.isArray(perAgent) ? perAgent[0]! : perAgent;
+      agentCfg.model = picked;
+      warnIfInvalid(picked, `models.${agentName}`);
       continue;
     }
 
@@ -133,7 +154,9 @@ export function resolveHarnessModels(
     if (tier) {
       const perTier = modelsConfig[tier];
       if (perTier !== undefined) {
-        agentCfg.model = Array.isArray(perTier) ? perTier[0] : perTier;
+        const picked = Array.isArray(perTier) ? perTier[0]! : perTier;
+        agentCfg.model = picked;
+        warnIfInvalid(picked, `models.${tier}`);
       }
     }
     // 3. No match — plugin default stays
