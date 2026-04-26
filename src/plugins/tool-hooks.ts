@@ -73,10 +73,26 @@ const exec = promisify(execFileCb);
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"]);
 const TS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 
-const DEFAULT_BACKPRESSURE_THRESHOLD = 2000;
+const DEFAULT_BACKPRESSURE_THRESHOLD = 6000;
 const DEFAULT_BACKPRESSURE_HEAD = 300;
 const DEFAULT_BACKPRESSURE_TAIL = 200;
 const DEFAULT_BACKPRESSURE_TOOLS = new Set(["bash", "read", "glob", "grep"]);
+
+type BackpressureShape = "skip" | "head-tail" | "tail" | "head-with-count";
+
+const DEFAULT_PER_TOOL_SHAPES: Record<string, BackpressureShape> = {
+  read: "skip", // Read has its own limit/offset; double-truncation violates that contract.
+  glob: "skip", // glob output is a path list; middle-truncation makes it unusable.
+  bash: "tail", // Failures and exit codes are at the end of the stream.
+  grep: "head-with-count", // First N matches verbatim + count tail; middle-truncation breaks match blocks.
+};
+
+// For head-with-count: keep the first N complete match blocks.
+// Block separator is a blank line (\n\n) which matches ripgrep/grep default output.
+const DEFAULT_GREP_HEAD_MATCHES = 20;
+
+// For "tail" shape, bash is high-value per char — use a larger tail budget.
+const DEFAULT_BASH_TAIL_CHARS = 4000;
 
 const DEFAULT_VERIFY_TIMEOUT_MS = 15_000;
 const TSC_MAX_BUFFER = 2 * 1024 * 1024;
@@ -126,6 +142,16 @@ interface ToolHooksConfig {
     headChars: number;
     tailChars: number;
     tools: Set<string>;
+    perTool: Record<
+      string,
+      {
+        threshold?: number;
+        headChars?: number;
+        tailChars?: number;
+        shape: BackpressureShape;
+        grepHeadMatches?: number;
+      }
+    >;
   };
   verifyLoop: {
     enabled: boolean;
@@ -140,6 +166,12 @@ interface ToolHooksConfig {
   };
 }
 
+function isValidShape(s: unknown): s is BackpressureShape {
+  return (
+    s === "skip" || s === "head-tail" || s === "tail" || s === "head-with-count"
+  );
+}
+
 function resolveConfig(config: Config, pluginOptions?: PluginOptions): ToolHooksConfig {
   // Prefer plugin options; fall back to legacy top-level harness key.
   const raw = (pluginOptions?.toolHooks ??
@@ -148,6 +180,24 @@ function resolveConfig(config: Config, pluginOptions?: PluginOptions): ToolHooks
   const vl = raw.verifyLoop ?? {};
   const ld = raw.loopDetection ?? {};
   const rd = raw.readDedup ?? {};
+
+  // Build perTool: defaults merged with user per-tool overrides.
+  const userPerTool =
+    bp.perTool && typeof bp.perTool === "object" ? bp.perTool : {};
+  const perTool: ToolHooksConfig["backpressure"]["perTool"] = {};
+  for (const tool of ["bash", "read", "glob", "grep"]) {
+    const u = (userPerTool as Record<string, any>)[tool] ?? {};
+    perTool[tool] = {
+      threshold: typeof u.threshold === "number" ? u.threshold : undefined,
+      headChars: typeof u.headChars === "number" ? u.headChars : undefined,
+      tailChars: typeof u.tailChars === "number" ? u.tailChars : undefined,
+      shape: isValidShape(u.shape)
+        ? u.shape
+        : DEFAULT_PER_TOOL_SHAPES[tool] ?? "head-tail",
+      grepHeadMatches:
+        typeof u.grepHeadMatches === "number" ? u.grepHeadMatches : undefined,
+    };
+  }
 
   return {
     backpressure: {
@@ -158,6 +208,7 @@ function resolveConfig(config: Config, pluginOptions?: PluginOptions): ToolHooks
       tools: Array.isArray(bp.tools)
         ? new Set(bp.tools)
         : DEFAULT_BACKPRESSURE_TOOLS,
+      perTool,
     },
     verifyLoop: {
       enabled: vl.enabled !== false,
@@ -234,19 +285,66 @@ async function resolveSessionDir(
 
 // ---- Backpressure ---------------------------------------------------------
 
+/** Returns true if `filePath` is within the plugin's tool-output spill dir. */
+function isUnderToolOutputDir(filePath: string): boolean {
+  try {
+    const abs = path.resolve(filePath);
+    const spillDir = path.resolve(getToolOutputDir());
+    // Simple prefix check — spillDir never ends in trailing slash from path.join.
+    return abs === spillDir || abs.startsWith(spillDir + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Split a grep-style output into match blocks (blank-line separated),
+ * keep the first `maxMatches`, and return the head + count of omitted.
+ * Blocks are rejoined with the same \n\n separator they were split on.
+ */
+function takeGrepHead(
+  text: string,
+  maxMatches: number,
+): { head: string; matchesKept: number; matchesOmitted: number } {
+  const blocks = text.split(/\n\n+/);
+  if (blocks.length <= maxMatches) {
+    return { head: text, matchesKept: blocks.length, matchesOmitted: 0 };
+  }
+  const kept = blocks.slice(0, maxMatches);
+  return {
+    head: kept.join("\n\n"),
+    matchesKept: kept.length,
+    matchesOmitted: blocks.length - maxMatches,
+  };
+}
+
 function applyBackpressure(
   cfg: ToolHooksConfig["backpressure"],
   toolName: string,
   callID: string,
   output: { output: string },
+  args?: unknown,
 ): void {
   if (!cfg.enabled) return;
   if (!cfg.tools.has(toolName)) return;
 
-  const text = output.output;
-  if (text.length <= cfg.threshold) return;
+  const perTool = cfg.perTool[toolName];
+  const shape: BackpressureShape = perTool?.shape ?? "head-tail";
 
-  // Don't truncate failures
+  // Shape "skip" — never truncate this tool's output.
+  if (shape === "skip") return;
+
+  // Recovery-read bypass: reading a spill file must never re-truncate.
+  if (toolName === "read") {
+    const fp = extractFilePath(args);
+    if (fp && isUnderToolOutputDir(fp)) return;
+  }
+
+  const text = output.output;
+  const threshold = perTool?.threshold ?? cfg.threshold;
+  if (text.length <= threshold) return;
+
+  // Bash-failure bypass stays FIRST among truncation paths.
   if (toolName === "bash" && looksLikeBashFailure(text)) return;
 
   // Write full output to disk
@@ -257,18 +355,45 @@ function applyBackpressure(
     diskPath = path.join(dir, `${callID}.txt`);
     fs.writeFileSync(diskPath, text);
   } catch {
-    // Disk write failed — fall back to truncation without path
+    // Disk write failed — fall back to in-memory truncation only.
   }
 
-  const head = text.slice(0, cfg.headChars);
-  const tail = text.slice(-cfg.tailChars);
-  const omitted = text.length - cfg.headChars - cfg.tailChars;
+  const pathNote = diskPath ? ` Full output saved to: ${diskPath}` : "";
 
-  const pathNote = diskPath
-    ? ` Full output saved to: ${diskPath}`
-    : "";
-  output.output =
-    `${head}\n\n... [${omitted} chars truncated — ${text.length} total.${pathNote}]\n\n${tail}`;
+  if (shape === "tail") {
+    const tailChars =
+      perTool?.tailChars ??
+      (toolName === "bash" ? DEFAULT_BASH_TAIL_CHARS : cfg.tailChars);
+    const tail = text.slice(-tailChars);
+    const omitted = text.length - tail.length;
+    output.output = `... [${omitted} chars truncated — ${text.length} total.${pathNote}]\n\n${tail}`;
+    return;
+  }
+
+  if (shape === "head-with-count") {
+    const maxMatches = perTool?.grepHeadMatches ?? DEFAULT_GREP_HEAD_MATCHES;
+    const { head, matchesOmitted } = takeGrepHead(text, maxMatches);
+    if (matchesOmitted === 0) {
+      // Fewer blocks than limit — fall back to plain head/tail.
+      const fallbackHead = text.slice(0, perTool?.headChars ?? cfg.headChars);
+      const fallbackTail = text.slice(-(perTool?.tailChars ?? cfg.tailChars));
+      const omitted =
+        text.length - fallbackHead.length - fallbackTail.length;
+      output.output = `${fallbackHead}\n\n... [${omitted} chars truncated — ${text.length} total.${pathNote}]\n\n${fallbackTail}`;
+      return;
+    }
+    const spillNote = diskPath ? ` — full output at ${diskPath}` : "";
+    output.output = `${head}\n\n... [${matchesOmitted} more matches${spillNote}]`;
+    return;
+  }
+
+  // Default shape "head-tail" (current behavior).
+  const headChars = perTool?.headChars ?? cfg.headChars;
+  const tailChars = perTool?.tailChars ?? cfg.tailChars;
+  const head = text.slice(0, headChars);
+  const tail = text.slice(-tailChars);
+  const omitted = text.length - headChars - tailChars;
+  output.output = `${head}\n\n... [${omitted} chars truncated — ${text.length} total.${pathNote}]\n\n${tail}`;
 }
 
 // ---- Verification loop ----------------------------------------------------
@@ -446,7 +571,7 @@ const plugin: Plugin = async ({ client }, options) => {
 
       // 3. Backpressure (runs last — truncates after verify loop has
       //    had a chance to append diagnostics to edit output)
-      applyBackpressure(cfg.backpressure, toolName, input.callID, output);
+      applyBackpressure(cfg.backpressure, toolName, input.callID, output, input.args);
     },
   };
 };
@@ -466,8 +591,13 @@ export const __test__ = {
   extractFilePath,
   hashContent,
   getToolOutputDir,
+  isUnderToolOutputDir,
+  takeGrepHead,
   EDIT_TOOLS,
   TS_EXTENSIONS,
   DEFAULT_BACKPRESSURE_THRESHOLD,
   DEFAULT_LOOP_THRESHOLD,
+  DEFAULT_PER_TOOL_SHAPES,
+  DEFAULT_GREP_HEAD_MATCHES,
+  DEFAULT_BASH_TAIL_CHARS,
 };
