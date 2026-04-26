@@ -28,7 +28,7 @@ import { openStateDb } from "../state/db.js";
 import { getRun, markRunRunning } from "../state/runs.js";
 import { appendEvent } from "../state/events.js";
 import { loadPlan } from "../plan/load.js";
-import { executeRun } from "./build.js";
+import { executeRun, deriveBranchPrefix } from "./build.js";
 import { getRunDir } from "../paths.js";
 import { requirePlugin } from "../../cli/plugin-check.js";
 
@@ -125,7 +125,14 @@ export async function runResume(opts: {
     plan: loaded.plan,
     planPath: run.plan_path,
     runDir,
-    branchPrefix: loaded.plan.branch_prefix ?? `pilot/${run.plan_slug}`,
+    // Reconstruct the same branch prefix the original `pilot build` used.
+    // The runId segment is what makes branches unique per run; resume MUST
+    // match the original to find the existing worktrees.
+    branchPrefix: deriveBranchPrefix(
+      loaded.plan.branch_prefix,
+      run.plan_slug,
+      discovered.runId,
+    ),
     cleanup,
   });
 }

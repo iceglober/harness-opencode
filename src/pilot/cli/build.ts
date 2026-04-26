@@ -213,7 +213,6 @@ export async function runBuild(opts: {
 
   // 4. Derive run-id + slug + dirs.
   const slug = await deriveUniqueSlug(plan, planPath, cwd);
-  const branchPrefix = plan.branch_prefix ?? `pilot/${slug}`;
 
   // 5. Open state DB.
   const opened = openStateDb(":memory:"); // placeholder; reassigned below
@@ -233,6 +232,13 @@ export async function runBuild(opts: {
   const runId = ulid();
   const dbPath = await getStateDbPath(cwd, runId);
   const runDir = await getRunDir(cwd, runId);
+
+  // Branch prefix MUST include the runId so that two runs of the same
+  // plan don't collide on `git worktree add -B`. Prior runs with preserved
+  // worktrees hold `<basePrefix>/<oldRunId>/<taskId>` branches; new runs
+  // get `<basePrefix>/<newRunId>/<taskId>`. `pilot resume` reconstructs
+  // the same prefix using the persisted run_id.
+  const branchPrefix = deriveBranchPrefix(plan.branch_prefix, slug, runId);
 
   const real = openStateDb(dbPath);
   cleanup.push(() => real.close());
@@ -762,6 +768,28 @@ export function startStreamingLogger(args: {
   });
 
   return unsub;
+}
+
+/**
+ * Construct the branch prefix used for per-task worktrees. Format is
+ * `<basePrefix>/<runId>` where `<basePrefix>` is either the user's
+ * `plan.branch_prefix` override or the default `pilot/<slug>`.
+ *
+ * The runId segment is what makes branches collision-free across runs
+ * of the same plan. Without it, `preserveOnFailure` worktrees from a
+ * prior run hold branches with the same name, and `git worktree add -B`
+ * refuses to re-bind them. With it, each run's branches live in their
+ * own ULID-scoped namespace.
+ *
+ * Exported so tests can lock the shape.
+ */
+export function deriveBranchPrefix(
+  planBranchPrefix: string | undefined,
+  slug: string,
+  runId: string,
+): string {
+  const base = planBranchPrefix ?? `pilot/${slug}`;
+  return `${base}/${runId}`;
 }
 
 async function deriveUniqueSlug(

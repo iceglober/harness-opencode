@@ -13,7 +13,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { runBuild } from "../src/pilot/cli/build.js";
+import {
+  runBuild,
+  deriveBranchPrefix,
+  startStreamingLogger,
+} from "../src/pilot/cli/build.js";
 
 let tmp: string;
 beforeEach(() => {
@@ -371,7 +375,6 @@ describe("runBuild — interactive picker seam", () => {
 
 describe("startStreamingLogger", () => {
   test("emits task.started / task.succeeded / run.progress lines", () => {
-    const { startStreamingLogger } = require("../src/pilot/cli/build.js");
     const lines: string[] = [];
     const stderrWriter = (s: string) => lines.push(s);
 
@@ -434,7 +437,6 @@ describe("startStreamingLogger", () => {
   });
 
   test("filters events from other runs", () => {
-    const { startStreamingLogger } = require("../src/pilot/cli/build.js");
     const lines: string[] = [];
     let cb:
       | ((e: {
@@ -472,7 +474,6 @@ describe("startStreamingLogger", () => {
   });
 
   test("suppresses chatty kinds (task.session.created etc.)", () => {
-    const { startStreamingLogger } = require("../src/pilot/cli/build.js");
     const lines: string[] = [];
     let cb:
       | ((e: {
@@ -514,5 +515,52 @@ describe("startStreamingLogger", () => {
     });
     expect(lines.join("")).toBe("");
     teardown();
+  });
+});
+
+// --- Branch naming (regression guard for cross-run worktree collision) ----
+
+describe("deriveBranchPrefix — runId scoping", () => {
+  test("default prefix includes runId segment", () => {
+    const prefix = deriveBranchPrefix(
+      undefined,
+      "rule-engine",
+      "01KQ490FASZ71YZYY0SMKC3B6Q",
+    );
+    expect(prefix).toBe(
+      "pilot/rule-engine/01KQ490FASZ71YZYY0SMKC3B6Q",
+    );
+  });
+
+  test("user-supplied plan.branch_prefix still gets runId appended", () => {
+    const prefix = deriveBranchPrefix(
+      "my-custom/prefix",
+      "ignored-slug",
+      "01KQ490FASZ71YZYY0SMKC3B6Q",
+    );
+    expect(prefix).toBe(
+      "my-custom/prefix/01KQ490FASZ71YZYY0SMKC3B6Q",
+    );
+  });
+
+  test("two different runIds produce non-colliding prefixes (the whole point)", () => {
+    const run1 = deriveBranchPrefix(undefined, "slug", "01AAAAAAAAAAAAAAAAAAAAAAAA");
+    const run2 = deriveBranchPrefix(undefined, "slug", "01BBBBBBBBBBBBBBBBBBBBBBBB");
+    expect(run1).not.toBe(run2);
+    // And — structurally — neither is a prefix of the other, so a per-task
+    // branch under run1 cannot be re-bound by a task under run2.
+    const task1 = `${run1}/T1-AUDIT`;
+    const task2 = `${run2}/T1-AUDIT`;
+    expect(task1).not.toBe(task2);
+  });
+
+  test("runId is the LAST segment before the task id (so <prefix>/<taskId> always contains the runId)", () => {
+    const prefix = deriveBranchPrefix(undefined, "slug", "01RUNID");
+    const taskBranch = `${prefix}/T1`;
+    // The runId must appear BEFORE the taskId segment, not after — the
+    // pool constructs `<branchPrefix>/<taskId>`, so runId must be in the
+    // prefix, not appended to the full name.
+    const segs = taskBranch.split("/");
+    expect(segs).toEqual(["pilot", "slug", "01RUNID", "T1"]);
   });
 });
