@@ -290,7 +290,9 @@ describe("resolveHarnessModels — legacy-ID warning", () => {
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain("bedrock/claude-opus-4");
     expect(warnings[0]).toContain("models.deep");
-    expect(warnings[0]).toContain("bedrock/anthropic.claude-opus-4-6");
+    expect(warnings[0]).toContain(
+      "amazon-bedrock/global.anthropic.claude-opus-4-7",
+    );
     expect(warnings[0]).toContain("bunx @glrs-dev/harness-opencode doctor");
 
     // All deep-tier agents still got the bad value written (user intent
@@ -322,18 +324,44 @@ describe("resolveHarnessModels — legacy-ID warning", () => {
     expect(joined).toContain("bedrock/claude-sonnet-4");
   });
 
-  it("does not warn when overrides are valid Catwalk IDs", () => {
+  it("does not warn when overrides are valid Models.dev IDs", () => {
     const agents = makeAgents();
     const { warnings } = capturingWarn(() =>
       resolveHarnessModels(agents as any, {} as any, {
         models: {
           deep: ["anthropic/claude-opus-4-7"],
+          mid: ["amazon-bedrock/global.anthropic.claude-sonnet-4-6"],
+          fast: ["google-vertex-anthropic/claude-haiku-4-5@20251001"],
+        },
+      } as any),
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("flags pre-Models.dev Catwalk-prefix IDs that were previously accepted", () => {
+    // Regression: before the Models.dev pivot, IDs like
+    // `bedrock/anthropic.claude-sonnet-4-6` and
+    // `vertexai/claude-haiku-4-5@20251001` were erroneously whitelisted.
+    // They crash at runtime; the validator must flag them.
+    const agents = makeAgents();
+    const { warnings } = capturingWarn(() =>
+      resolveHarnessModels(agents as any, {} as any, {
+        models: {
           mid: ["bedrock/anthropic.claude-sonnet-4-6"],
           fast: ["vertexai/claude-haiku-4-5@20251001"],
         },
       } as any),
     );
-    expect(warnings).toEqual([]);
+    expect(warnings.length).toBe(2);
+    const joined = warnings.join("\n");
+    expect(joined).toContain("bedrock/anthropic.claude-sonnet-4-6");
+    expect(joined).toContain(
+      "amazon-bedrock/global.anthropic.claude-sonnet-4-6",
+    );
+    expect(joined).toContain("vertexai/claude-haiku-4-5@20251001");
+    expect(joined).toContain(
+      "google-vertex-anthropic/claude-haiku-4-5@20251001",
+    );
   });
 
   it("does not warn on unknown-but-plausible IDs (conservative)", () => {
