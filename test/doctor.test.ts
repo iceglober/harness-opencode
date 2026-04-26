@@ -114,8 +114,12 @@ describe("doctor — model-override validation", () => {
     expect(r.stdout).toContain("bedrock/claude-sonnet-4");
 
     // Suggestion + remediation hint present for each.
-    expect(r.stdout).toContain("bedrock/anthropic.claude-opus-4-6");
-    expect(r.stdout).toContain("bedrock/anthropic.claude-sonnet-4-6");
+    expect(r.stdout).toContain(
+      "amazon-bedrock/global.anthropic.claude-opus-4-7",
+    );
+    expect(r.stdout).toContain(
+      "amazon-bedrock/global.anthropic.claude-sonnet-4-6",
+    );
     expect(r.stdout).toContain("remove this key, or replace with");
   });
 

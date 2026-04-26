@@ -30,7 +30,7 @@ import {
   inspectCachePin,
   getOpenCodeCachePackageDir,
 } from "../auto-update.js";
-import { fetchProviders, suggestTiers, type CatwalkProvider } from "./catwalk.js";
+import { fetchModelsDevProviders, suggestTiersFromModelsDev, pickBedrockTierIds, type ModelsDevProvider } from "./models-dev.js";
 
 const PLUGIN_NAME = "@glrs-dev/harness-opencode";
 
@@ -60,8 +60,13 @@ export interface ModelPreset {
 }
 
 /**
- * Hardcoded fallback presets — used when the Catwalk API is unreachable.
- * Model IDs must match the Catwalk registry format: `<provider>/<catwalk-model-id>`.
+ * Hardcoded fallback presets — used when the Models.dev API is unreachable.
+ *
+ * Model IDs are in `<provider_id>/<model_id>` format, matching Models.dev's
+ * registry (which is also what OpenCode's runtime validates against). The
+ * Bedrock preset uses the `global.anthropic.*` CRIS route for broadest
+ * availability. The Vertex preset uses `google-vertex-anthropic` (separate
+ * from `google-vertex` which hosts Google's own models).
  */
 export const MODEL_PRESETS: ModelPreset[] = [
   {
@@ -73,17 +78,17 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     label: "AWS Bedrock",
-    providerId: "bedrock",
-    deep: "bedrock/anthropic.claude-opus-4-6",
-    mid: "bedrock/anthropic.claude-sonnet-4-6",
-    fast: "bedrock/anthropic.claude-haiku-4-5-20251001-v1:0",
+    providerId: "amazon-bedrock",
+    deep: "amazon-bedrock/global.anthropic.claude-opus-4-7",
+    mid: "amazon-bedrock/global.anthropic.claude-sonnet-4-6",
+    fast: "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
   },
   {
-    label: "Google Vertex AI",
-    providerId: "vertexai",
-    deep: "vertexai/claude-opus-4-6@20250610",
-    mid: "vertexai/claude-sonnet-4-6@20250725",
-    fast: "vertexai/claude-haiku-4-5@20251001",
+    label: "Google Vertex AI (Claude)",
+    providerId: "google-vertex-anthropic",
+    deep: "google-vertex-anthropic/claude-opus-4-7@default",
+    mid: "google-vertex-anthropic/claude-sonnet-4-6@default",
+    fast: "google-vertex-anthropic/claude-haiku-4-5@20251001",
   },
 ];
 
@@ -363,15 +368,15 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
     console.log();
     console.log(`${c.dim}Models${c.reset}`);
 
-    // Try to fetch live providers from Catwalk; fall back to hardcoded presets.
+    // Try to fetch live providers from Models.dev; fall back to hardcoded presets.
     info("Fetching available providers…");
-    const catwalkProviders = await fetchProviders();
+    const modelsDevProviders = await fetchModelsDevProviders();
 
     let preset: ModelPreset | null = null;
 
-    if (catwalkProviders && catwalkProviders.length > 0) {
-      // Build choices from live Catwalk data.
-      const providerChoices = catwalkProviders.map((p) => p.name);
+    if (modelsDevProviders && modelsDevProviders.length > 0) {
+      // Build choices from live Models.dev data.
+      const providerChoices = modelsDevProviders.map((p: ModelsDevProvider) => p.name);
       providerChoices.push("Keep defaults (no model config)");
       providerChoices.push("Custom (enter model IDs manually)");
 
@@ -382,13 +387,21 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
         keepDefaultsIdx,
       );
 
-      if (providerIdx < catwalkProviders.length) {
-        const provider = catwalkProviders[providerIdx]!;
+      if (providerIdx < modelsDevProviders.length) {
+        const provider = modelsDevProviders[providerIdx]!;
         ok(`Provider: ${provider.name}`);
 
-        // Let the user pick a model for each tier.
-        const suggested = suggestTiers(provider);
-        const modelChoices = provider.models.map((m) => `${provider.id}/${m.id}`);
+        // Amazon Bedrock ships both `global.anthropic.*` (CRIS) and
+        // `anthropic.*` variants of the same models. Use the specialized
+        // picker so the suggested defaults are the high-availability
+        // CRIS routes — users can still override at the per-tier prompt.
+        const suggested =
+          provider.id === "amazon-bedrock"
+            ? pickBedrockTierIds(provider)
+            : suggestTiersFromModelsDev(provider);
+        const modelChoices = Object.keys(provider.models).map(
+          (modelId) => `${provider.id}/${modelId}`,
+        );
 
         const tiers: Array<{ tier: string; suggested: string }> = [
           { tier: "deep", suggested: suggested.deep },
@@ -415,7 +428,7 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
           mid: picked["mid"]!,
           fast: picked["fast"]!,
         };
-      } else if (providerIdx === catwalkProviders.length) {
+      } else if (providerIdx === modelsDevProviders.length) {
         // "Keep defaults" — no model config, preset stays null, skip custom too.
         ok("Models: OpenCode defaults");
         // Signal that we should NOT fall through to the custom prompt.
@@ -425,7 +438,7 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
       // else: custom — preset stays null, handled below
     } else {
       // Offline fallback — use hardcoded presets.
-      warn("Could not reach Catwalk API — using built-in presets");
+      warn("Could not reach Models.dev API — using built-in presets");
       const presetLabels = [...MODEL_PRESETS.map((p) => p.label), "Keep defaults (no model config)", "Custom (enter model IDs manually)"];
       const keepDefaultsOfflineIdx = presetLabels.length - 2;
       const choice = await promptChoice(
@@ -454,7 +467,7 @@ export async function install(opts: InstallOptions = {}): Promise<void> {
       ok(`Models configured`);
     } else if (!pluginOpts._skipModels) {
       // Custom: ask for each tier manually.
-      info("Enter model IDs in <provider>/<model-id> format (e.g. bedrock/anthropic.claude-opus-4-6)");
+      info("Enter model IDs in <provider>/<model-id> format (e.g. amazon-bedrock/global.anthropic.claude-opus-4-7)");
       const { input } = await import("@inquirer/prompts");
       const deepModel = await input({ message: "  deep (most capable):" });
       const midModel = await input({ message: "  mid (balanced):" });
