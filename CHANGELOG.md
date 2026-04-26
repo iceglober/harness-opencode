@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.15.0
+
+### Minor Changes
+
+- [#121](https://github.com/iceglober/harness-opencode/pull/121) [`6089f8e`](https://github.com/iceglober/harness-opencode/commit/6089f8e1b84875aca549b2e1ce64c7beeeefcab5) Thanks [@iceglober](https://github.com/iceglober)! - Pilot UX overhaul: interactive plan picker, positional path resolution, and streaming progress.
+
+  - **`pilot build` plan selection** now accepts a positional arg that resolves smartly: absolute path, cwd-relative, plans-dir-relative (with or without `.yaml`/`.yml` suffix). When no arg is given and stdin is a TTY, an `@inquirer/prompts` `select()` picker lists plans from the plans dir sorted by mtime (newest first), labelled with filename + plan name + relative time. `--plan <path>` still works for scripts. Non-TTY with no args falls back to "newest in plans dir" (unchanged v0.1 behavior).
+  - **Streaming per-task progress** on stderr during `pilot build`. Lines like `[HH:MM:SS] task.started T1`, `task.verify.passed T1`, `task.succeeded T1 in 42s`, `run.progress 2/7 succeeded`. Suppressed by `--quiet`. Chatty kinds (`task.session.created`, `task.attempt`) stay in the DB; `pilot logs --run` surfaces them. stdout stays clean for the final summary.
+  - **Task-level `context:` field** on `pilot.yaml` tasks — optional rich markdown block rendered into the builder's kickoff as a `## Context` section between verify and the task directive. Planner skill gets a new rule (`rules/task-context.md`) and pilot-planner.md tells the planner to populate it for non-trivial tasks. Cover outcome, rationale, code pointers, acceptance shorthand.
+  - Exit code change: missing plan via `--plan <path>` now exits 2 (resolution surface) instead of 1 (generic error). Consistent with schema-invalid plans.
+
+### Patch Changes
+
+- [#115](https://github.com/iceglober/harness-opencode/pull/115) [`4d537c0`](https://github.com/iceglober/harness-opencode/commit/4d537c0184a08fdef03f6255d5922f28fb302e08) Thanks [@iceglober](https://github.com/iceglober)! - Security & OSS hygiene — PR1 of a 3-part remediation (follow-ups tracked in [#113](https://github.com/iceglober/harness-opencode/issues/113) and [#114](https://github.com/iceglober/harness-opencode/issues/114)):
+
+  - Add `SECURITY.md` with private disclosure channel, response SLA, scope statement, and safe-harbor clause.
+  - Validate Catwalk model-catalog responses with a zod schema before any value reaches `opencode.json`; malformed responses fail closed and the installer falls back to built-in presets.
+  - Document the threat boundary, outbound network calls, and the explicit "agent bash deny-list is not a sandbox" limit in the README.
+  - Add npm provenance verification instructions (`npm audit signatures`) to the README.
+  - Declare `engines.node >= 20.10` in `package.json` and add a runtime guard at the top of the CLI binary so users on unsupported runtimes get an actionable error instead of a cryptic stack trace.
+  - Include `SECURITY.md` in the published tarball.
+
 ## 0.14.0
 
 ### Minor Changes
