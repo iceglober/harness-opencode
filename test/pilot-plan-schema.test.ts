@@ -416,6 +416,70 @@ describe("parsePlan — strict mode rejects unknown fields", () => {
   });
 });
 
+// --- Optional context field ------------------------------------------------
+
+describe("parsePlan — optional task.context field", () => {
+  test("accepts a task with no context field", () => {
+    const result = parsePlan({
+      name: "no context",
+      tasks: [{ id: "T1", title: "t", prompt: "p" }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.tasks[0]!.context).toBeUndefined();
+  });
+
+  test("accepts a task with a non-empty context string", () => {
+    const result = parsePlan({
+      name: "with context",
+      tasks: [
+        {
+          id: "T1",
+          title: "t",
+          prompt: "p",
+          context: "## Outcome\n\nUser can now type `pilot build <name>` without the full path.",
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.tasks[0]!.context).toBe(
+      "## Outcome\n\nUser can now type `pilot build <name>` without the full path.",
+    );
+  });
+
+  test("accepts an empty-string context (though the planner should omit instead)", () => {
+    const result = parsePlan({
+      name: "empty context",
+      tasks: [{ id: "T1", title: "t", prompt: "p", context: "" }],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test("rejects a context of the wrong type (e.g., number)", () => {
+    const result = parsePlan({
+      name: "wrong type",
+      tasks: [{ id: "T1", title: "t", prompt: "p", context: 42 }],
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  test("strict mode still rejects typos next to context (e.g., `contexr`)", () => {
+    const result = parsePlan({
+      name: "typo",
+      tasks: [
+        {
+          id: "T1",
+          title: "t",
+          prompt: "p",
+          contexr: "should be context", // typo
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
 // --- Model spec validation -------------------------------------------------
 
 describe("parsePlan — model spec validation", () => {

@@ -50,7 +50,7 @@ Be thorough here. A planner who shipped a sloppy plan because they only skimmed 
 
 ## 3. Apply the planning methodology
 
-The `pilot-planning` skill carries the seven rules. Apply them:
+The `pilot-planning` skill carries the eight rules. Apply them:
 
 1. First-principles task framing.
 2. Decomposition into right-sized tasks.
@@ -59,6 +59,7 @@ The `pilot-planning` skill carries the seven rules. Apply them:
 5. DAG shape (linear vs. diamond vs. parallel).
 6. Optional milestone grouping.
 7. Self-review.
+8. Per-task `context:` population (rationale, code pointers, acceptance shorthand).
 
 ## 4. Write the YAML
 
@@ -87,6 +88,14 @@ tasks:
       The full instruction sent to pilot-builder. Multi-line.
       Be specific. Don't be cute. The agent has no taste — pretend
       you're handing notes to a junior engineer who's never been here.
+    context: |
+      Optional rich markdown block. Rendered into the builder's
+      kickoff as a `## Context` section BEFORE the directive. Use
+      it for narrative: the user-facing outcome, the rationale,
+      specific code pointers (file paths + line ranges), acceptance
+      shorthand, gotchas. See rules/task-context.md for the full
+      methodology. Omit on trivial one-line tasks. Populate it on
+      anything that touches >1 file or has non-obvious framing.
     touches:
       - src/api/**
       - test/api/**

@@ -182,6 +182,14 @@ export function kickoffPrompt(
     }
   }
 
+  if (task.context !== undefined && task.context.trim().length > 0) {
+    // Placed BEFORE the task directive so the directive is the last
+    // thing in the builder's kickoff context — the most recent, most
+    // salient framing when it starts making edits. Reading order:
+    // hard rules → scope → verify → context (grounding) → task (act).
+    sections.push(``, `## Context`, ``, task.context.trim());
+  }
+
   sections.push(``, `## Task`, ``, task.prompt.trim());
 
   return sections.join("\n");

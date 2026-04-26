@@ -152,7 +152,7 @@ describe("runBuild — validation", () => {
     expect(r.code).toBe(2);
   });
 
-  test("missing plan file: exit 1", async () => {
+  test("missing plan file (via --plan): exit 2", async () => {
     const setup = setupRepoWithPlan();
     const r = await withRepoEnv(setup, () =>
       captured(() =>
@@ -162,7 +162,14 @@ describe("runBuild — validation", () => {
         }),
       ),
     );
-    expect(r.code).toBe(1);
+    // Exit 2 — same exit code as schema-invalid plan, because a missing
+    // plan is a resolution-surface problem (user fixes the path). This
+    // replaced the v0.1 exit-1 behavior, which was reached via runValidate
+    // throwing "cannot stat ...". Now the three-step resolver catches
+    // non-existent paths up front and short-circuits with exit 2 + a
+    // clear stderr message listing the tried paths.
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/cannot find plan/);
   });
 });
 
@@ -204,5 +211,308 @@ describe("runBuild — --workers", () => {
     expect(r.code).toBe(0);
     expect(r.stderr).toMatch(/--workers=4/);
     expect(r.stderr).toMatch(/clamping/i);
+  });
+});
+
+// --- Positional plan arg + three-step resolution --------------------------
+
+describe("runBuild — positional plan arg", () => {
+  test("absolute path via positional resolves and dry-runs", async () => {
+    const setup = setupRepoWithPlan();
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runBuild({ planPositional: setup.planPath, dryRun: true }),
+      ),
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/build cli test/);
+  });
+
+  test("bare filename resolves against plans dir", async () => {
+    const setup = setupRepoWithPlan();
+    // plan filename is "test-plan.yaml" — pass bare name.
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runBuild({ planPositional: "test-plan.yaml", dryRun: true }),
+      ),
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/build cli test/);
+  });
+
+  test("bare stem (no extension) resolves against plans dir with .yaml appended", async () => {
+    const setup = setupRepoWithPlan();
+    const r = await withRepoEnv(setup, () =>
+      captured(() => runBuild({ planPositional: "test-plan", dryRun: true })),
+    );
+    expect(r.code).toBe(0);
+  });
+
+  test("cwd-relative path resolves when plan lives in cwd", async () => {
+    const setup = setupRepoWithPlan();
+    // Copy the plan into cwd so a cwd-relative path hits.
+    const copyPath = path.join(setup.repo, "local-plan.yaml");
+    fs.writeFileSync(copyPath, fs.readFileSync(setup.planPath, "utf8"));
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runBuild({ planPositional: "local-plan.yaml", dryRun: true }),
+      ),
+    );
+    expect(r.code).toBe(0);
+  });
+
+  test("positional path that doesn't match any location: exit 2 with tried paths in stderr", async () => {
+    const setup = setupRepoWithPlan();
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runBuild({ planPositional: "does-not-exist.yaml", dryRun: true }),
+      ),
+    );
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/cannot find plan/);
+    expect(r.stderr).toMatch(/Tried:/);
+  });
+
+  test("--plan wins over positional when both are supplied", async () => {
+    const setup = setupRepoWithPlan();
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runBuild({
+          plan: setup.planPath,
+          planPositional: "does-not-exist.yaml",
+          dryRun: true,
+        }),
+      ),
+    );
+    expect(r.code).toBe(0);
+  });
+});
+
+// --- Interactive picker seam ----------------------------------------------
+
+describe("runBuild — interactive picker seam", () => {
+  test("readPlanSelection stub returning a path is respected when TTY", async () => {
+    const setup = setupRepoWithPlan();
+    // Force isTTY true so the TTY branch is taken. Restore after.
+    const prevIsTTY = (process.stdin as NodeJS.ReadStream).isTTY;
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+    try {
+      const r = await withRepoEnv(setup, () =>
+        captured(() =>
+          runBuild({
+            dryRun: true,
+            readPlanSelection: async () => setup.planPath,
+          }),
+        ),
+      );
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(/build cli test/);
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: prevIsTTY,
+        configurable: true,
+      });
+    }
+  });
+
+  test("readPlanSelection returning undefined (Ctrl-C) exits 130", async () => {
+    const setup = setupRepoWithPlan();
+    const prevIsTTY = (process.stdin as NodeJS.ReadStream).isTTY;
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+    try {
+      const r = await withRepoEnv(setup, () =>
+        captured(() =>
+          runBuild({
+            dryRun: true,
+            readPlanSelection: async () => undefined,
+          }),
+        ),
+      );
+      expect(r.code).toBe(130);
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: prevIsTTY,
+        configurable: true,
+      });
+    }
+  });
+
+  test("no args, non-TTY: falls back to newest in plans dir", async () => {
+    const setup = setupRepoWithPlan();
+    // bun test is typically non-TTY; don't force. If it were TTY the
+    // test would need readPlanSelection to get past the picker.
+    const prevIsTTY = (process.stdin as NodeJS.ReadStream).isTTY;
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: false,
+      configurable: true,
+    });
+    try {
+      const r = await withRepoEnv(setup, () =>
+        captured(() => runBuild({ dryRun: true })),
+      );
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(/build cli test/);
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value: prevIsTTY,
+        configurable: true,
+      });
+    }
+  });
+});
+
+// --- Streaming logger (unit test via exported helper) ----------------------
+
+describe("startStreamingLogger", () => {
+  test("emits task.started / task.succeeded / run.progress lines", () => {
+    const { startStreamingLogger } = require("../src/pilot/cli/build.js");
+    const lines: string[] = [];
+    const stderrWriter = (s: string) => lines.push(s);
+
+    // Fake subscriber that captures the registered callback so the test
+    // can fire synthetic events.
+    let cb: ((e: {
+      runId: string;
+      taskId: string | null;
+      kind: string;
+      payload: unknown;
+      ts: number;
+    }) => void) | null = null;
+    const subscribe = (handler: typeof cb) => {
+      cb = handler;
+      return () => {
+        cb = null;
+      };
+    };
+
+    const teardown = startStreamingLogger({
+      stderrWriter,
+      runId: "RUN1",
+      totalTasks: 3,
+      subscribe: subscribe as Parameters<
+        typeof startStreamingLogger
+      >[0]["subscribe"],
+      clock: () => 1700000000000,
+    });
+
+    // Fire: task T1 starts, passes verify, succeeds.
+    cb!({
+      runId: "RUN1",
+      taskId: "T1",
+      kind: "task.started",
+      payload: null,
+      ts: 1700000000000,
+    });
+    cb!({
+      runId: "RUN1",
+      taskId: "T1",
+      kind: "task.verify.passed",
+      payload: null,
+      ts: 1700000010000,
+    });
+    cb!({
+      runId: "RUN1",
+      taskId: "T1",
+      kind: "task.succeeded",
+      payload: null,
+      ts: 1700000015000,
+    });
+
+    const out = lines.join("");
+    expect(out).toMatch(/task\.started T1/);
+    expect(out).toMatch(/task\.verify\.passed T1/);
+    expect(out).toMatch(/task\.succeeded T1/);
+    expect(out).toMatch(/run\.progress 1\/3 succeeded/);
+
+    teardown();
+  });
+
+  test("filters events from other runs", () => {
+    const { startStreamingLogger } = require("../src/pilot/cli/build.js");
+    const lines: string[] = [];
+    let cb:
+      | ((e: {
+          runId: string;
+          taskId: string | null;
+          kind: string;
+          payload: unknown;
+          ts: number;
+        }) => void)
+      | null = null;
+    const subscribe = (handler: typeof cb) => {
+      cb = handler;
+      return () => {
+        cb = null;
+      };
+    };
+    const teardown = startStreamingLogger({
+      stderrWriter: (s: string) => lines.push(s),
+      runId: "RUN1",
+      totalTasks: 2,
+      subscribe: subscribe as Parameters<
+        typeof startStreamingLogger
+      >[0]["subscribe"],
+      clock: () => 1700000000000,
+    });
+    cb!({
+      runId: "OTHER_RUN",
+      taskId: "T1",
+      kind: "task.started",
+      payload: null,
+      ts: 1700000000000,
+    });
+    expect(lines.join("")).toBe("");
+    teardown();
+  });
+
+  test("suppresses chatty kinds (task.session.created etc.)", () => {
+    const { startStreamingLogger } = require("../src/pilot/cli/build.js");
+    const lines: string[] = [];
+    let cb:
+      | ((e: {
+          runId: string;
+          taskId: string | null;
+          kind: string;
+          payload: unknown;
+          ts: number;
+        }) => void)
+      | null = null;
+    const subscribe = (handler: typeof cb) => {
+      cb = handler;
+      return () => {
+        cb = null;
+      };
+    };
+    const teardown = startStreamingLogger({
+      stderrWriter: (s: string) => lines.push(s),
+      runId: "RUN1",
+      totalTasks: 1,
+      subscribe: subscribe as Parameters<
+        typeof startStreamingLogger
+      >[0]["subscribe"],
+      clock: () => 1700000000000,
+    });
+    cb!({
+      runId: "RUN1",
+      taskId: "T1",
+      kind: "task.session.created",
+      payload: null,
+      ts: 1700000000000,
+    });
+    cb!({
+      runId: "RUN1",
+      taskId: "T1",
+      kind: "task.attempt",
+      payload: null,
+      ts: 1700000000001,
+    });
+    expect(lines.join("")).toBe("");
+    teardown();
   });
 });

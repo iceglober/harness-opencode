@@ -31,6 +31,7 @@ import {
   flag,
   option,
   optional,
+  positional,
   string,
   number as cmdNumber,
 } from "cmd-ts";
@@ -53,7 +54,7 @@ import {
   markRunFinished,
 } from "../state/runs.js";
 import { upsertFromPlan, countByStatus } from "../state/tasks.js";
-import { appendEvent } from "../state/events.js";
+import { appendEvent, subscribeToEvents } from "../state/events.js";
 import { startOpencodeServer } from "../opencode/server.js";
 import { EventBus } from "../opencode/events.js";
 import { WorktreePool } from "../worktree/pool.js";
@@ -69,11 +70,17 @@ export const buildCmd = command({
   name: "build",
   description: "Execute a pilot.yaml plan via the worker loop.",
   args: {
+    planPositional: positional({
+      type: optional(string),
+      displayName: "plan",
+      description:
+        "Plan path: absolute, cwd-relative, or bare filename (with or without .yaml/.yml) resolved against the pilot plans dir. Omit to pick interactively from the plans dir.",
+    }),
     plan: option({
       long: "plan",
       type: optional(string),
       description:
-        "Path to the plan file. Defaults to the newest *.yaml in the pilot plans dir.",
+        "Path to the plan file. Wins over the positional arg for backwards compatibility. Defaults to interactive picker; in non-TTY mode falls back to the newest *.yaml in the pilot plans dir.",
     }),
     filter: option({
       long: "filter",
@@ -83,6 +90,11 @@ export const buildCmd = command({
     dryRun: flag({
       long: "dry-run",
       description: "Validate the plan and print a summary; do not execute.",
+    }),
+    quiet: flag({
+      long: "quiet",
+      description:
+        "Suppress per-task progress lines on stderr. Summary and error output still print.",
     }),
     opencodePort: option({
       long: "opencode-port",
@@ -105,22 +117,64 @@ export const buildCmd = command({
 // --- Implementation --------------------------------------------------------
 
 export async function runBuild(opts: {
+  /** Positional plan arg: absolute, cwd-relative, or bare filename. */
+  planPositional?: string | undefined;
+  /** --plan flag: wins over the positional arg when both are supplied. */
   plan?: string | undefined;
   filter?: string | undefined;
   dryRun?: boolean;
+  quiet?: boolean;
   opencodePort?: number | undefined;
   workers?: number | undefined;
+  /**
+   * Test seam. When no plan arg is provided and stdin is a TTY, we call
+   * this to let the user pick a plan from the dir. Defaults to an
+   * `@inquirer/prompts` `select()` listing plans sorted by mtime desc.
+   * Returns the chosen absolute plan path, or `undefined` if the user
+   * bailed (Ctrl-C).
+   */
+  readPlanSelection?: () => Promise<string | undefined>;
+  /**
+   * Test seam. Streaming progress lines are written via this function.
+   * Defaults to `process.stderr.write`. Tests inject a stub to capture
+   * output without polluting the test runner's stderr.
+   */
+  stderrWriter?: (chunk: string) => void;
 }): Promise<number> {
-  // 1. Validate. Reuse runValidate so we get the same error rendering.
+  const cwd = process.cwd();
+  const stderrWriter =
+    opts.stderrWriter ?? ((s) => void process.stderr.write(s));
+
+  // 1. Resolve the plan path BEFORE handing off to runValidate. Previously
+  //    `runValidate` re-resolved, which meant a relative bare-filename
+  //    like `rule-engine-refocus.yaml` was treated as cwd-relative and
+  //    missed the plans dir entirely. We do the three-step resolution
+  //    here and pass an absolute path downstream.
+  const resolveResult = await resolvePlanPathSmart(
+    {
+      flag: opts.plan,
+      positional: opts.planPositional,
+    },
+    cwd,
+    opts.readPlanSelection,
+  );
+  if (resolveResult.kind === "cancelled") return 130;
+  if (resolveResult.kind === "error") {
+    process.stderr.write(`pilot build: ${resolveResult.message}\n`);
+    return 2;
+  }
+  const resolvedPlanPath = resolveResult.path;
+
+  // 2. Validate. Reuse runValidate so we get the same error rendering.
   const validateCode = await runValidate({
-    planPath: opts.plan,
+    planPath: resolvedPlanPath,
     quiet: true,
   });
   if (validateCode !== 0) return validateCode;
 
-  // 2. Re-load (validate already opened it once; re-loading is cheap
+  // 3. Re-load (validate already opened it once; re-loading is cheap
   //    and lets us keep runValidate as a pure exit-code function).
-  const planPath = await resolvePlanPath(opts.plan);
+  const planPath = resolvedPlanPath;
   const loaded = await loadPlan(planPath);
   if (!loaded.ok) {
     // Should be unreachable since runValidate just succeeded; defensive.
@@ -156,8 +210,6 @@ export async function runBuild(opts: {
     printDryRun(plan, planPath);
     return 0;
   }
-
-  const cwd = process.cwd();
 
   // 4. Derive run-id + slug + dirs.
   const slug = await deriveUniqueSlug(plan, planPath, cwd);
@@ -214,6 +266,8 @@ export async function runBuild(opts: {
     branchPrefix,
     cleanup,
     opencodePort: opts.opencodePort,
+    quiet: opts.quiet,
+    stderrWriter,
   });
 }
 
@@ -247,9 +301,15 @@ export async function executeRun(args: {
   branchPrefix: string;
   cleanup: Array<() => Promise<void> | void>;
   opencodePort?: number | undefined;
+  /** Suppress per-task streaming output on stderr. Summary still prints. */
+  quiet?: boolean;
+  /** Sink for streaming log lines. Defaults to `process.stderr.write`. */
+  stderrWriter?: (chunk: string) => void;
 }): Promise<number> {
   const { db, runId, plan, planPath, runDir, branchPrefix, cleanup } = args;
   const cwd = process.cwd();
+  const stderrWriter =
+    args.stderrWriter ?? ((s: string) => void process.stderr.write(s));
 
   // 6. Spawn server.
   let server;
@@ -308,6 +368,23 @@ export async function executeRun(args: {
     process.off("SIGINT", sigintHandler);
   });
 
+  // Streaming progress logger — subscribes to appendEvent fan-out and
+  // writes per-task lines to stderr as events are persisted. Suppressed
+  // under --quiet. Teardown runs before DB close; we push it to cleanup
+  // so SIGINT paths also clean up the subscription.
+  if (args.quiet !== true) {
+    const unsubLogger = startStreamingLogger({
+      stderrWriter,
+      runId,
+      totalTasks: plan.tasks.length,
+      subscribe: subscribeToEvents,
+    });
+    cleanup.push(() => unsubLogger());
+    stderrWriter(
+      `pilot build: run ${runId} started (${plan.tasks.length} tasks)\n`,
+    );
+  }
+
   const result = await runWorker({
     db: db.db,
     runId,
@@ -349,24 +426,342 @@ export async function executeRun(args: {
 
 // --- Helpers ---------------------------------------------------------------
 
-async function resolvePlanPath(input: string | undefined): Promise<string> {
-  if (input !== undefined && input.length > 0) {
-    return path.resolve(input);
+/**
+ * Three-step plan-path resolver. Replaces the v0.1 resolver, which only
+ * handled `path.resolve(input)` (and therefore failed on bare filenames
+ * that live in the plans dir — forcing users to type the full
+ * `~/.glorious/opencode/<repo>/pilot/plans/<file>.yaml` every time).
+ *
+ * Resolution order:
+ *   1. `--plan <path>` flag (preserved for backwards compatibility and
+ *      script pinning). Treated as an explicit absolute-or-cwd-relative
+ *      path; no fallback search.
+ *   2. Positional plan arg. Tried as: (a) absolute path, (b) cwd-relative,
+ *      (c) plans-dir-relative, (d) plans-dir-relative with `.yaml` appended,
+ *      (e) plans-dir-relative with `.yml` appended. First hit wins.
+ *   3. Interactive picker via `readPlanSelection()` when stdin is a TTY.
+ *   4. Fallback to the newest *.yaml in the plans dir (old default).
+ *
+ * Returns a discriminated result so callers can distinguish "user Ctrl-C'd
+ * out of the picker" (exit 130) from "no plan could be resolved" (exit 2)
+ * from a successful resolution.
+ */
+type ResolveResult =
+  | { kind: "ok"; path: string }
+  | { kind: "cancelled" } // user hit Ctrl-C in the picker
+  | { kind: "error"; message: string };
+
+async function resolvePlanPathSmart(
+  input: { flag?: string | undefined; positional?: string | undefined },
+  cwd: string,
+  readPlanSelection?: () => Promise<string | undefined>,
+): Promise<ResolveResult> {
+  // 1. --plan flag — explicit, wins over positional.
+  if (input.flag !== undefined && input.flag.length > 0) {
+    const resolved = path.isAbsolute(input.flag)
+      ? input.flag
+      : path.resolve(cwd, input.flag);
+    if (await isFile(resolved)) {
+      return { kind: "ok", path: resolved };
+    }
+    return {
+      kind: "error",
+      message: `cannot find plan at ${JSON.stringify(resolved)} (from --plan ${JSON.stringify(input.flag)})`,
+    };
   }
-  const dir = await getPlansDir(process.cwd());
-  const entries = await fs.readdir(dir);
-  const yamls = entries.filter((n) => n.endsWith(".yaml") || n.endsWith(".yml"));
-  if (yamls.length === 0) {
-    throw new Error(`pilot build: no *.yaml in ${dir}`);
+
+  // 2. Positional arg — three-step resolution.
+  if (input.positional !== undefined && input.positional.length > 0) {
+    const plansDir = await getPlansDir(cwd);
+    const candidates: string[] = [];
+    if (path.isAbsolute(input.positional)) {
+      candidates.push(input.positional);
+    } else {
+      candidates.push(path.resolve(cwd, input.positional));
+      candidates.push(path.join(plansDir, input.positional));
+      if (!/\.(ya?ml)$/i.test(input.positional)) {
+        candidates.push(path.join(plansDir, `${input.positional}.yaml`));
+        candidates.push(path.join(plansDir, `${input.positional}.yml`));
+      }
+    }
+    for (const c of candidates) {
+      if (await isFile(c)) return { kind: "ok", path: c };
+    }
+    return {
+      kind: "error",
+      message:
+        `cannot find plan ${JSON.stringify(input.positional)}. Tried:\n` +
+        candidates.map((c) => `  - ${c}`).join("\n"),
+    };
   }
+
+  // 3. Interactive picker — only when stdin is a TTY AND a reader is
+  //    available (either the default inquirer picker or a test stub).
+  //    A caller that explicitly passes `readPlanSelection: undefined`
+  //    AND no args is asking for the non-interactive fallback path,
+  //    which we handle in step 4.
+  if (process.stdin.isTTY && readPlanSelection !== undefined) {
+    const picked = await readPlanSelection();
+    if (picked === undefined) return { kind: "cancelled" };
+    return { kind: "ok", path: picked };
+  }
+  if (process.stdin.isTTY && readPlanSelection === undefined) {
+    // Production default: fall back to the inquirer-backed picker when
+    // the caller didn't override. Tests that want non-interactive
+    // fallback should pass `readPlanSelection: () => Promise.resolve(undefined)`
+    // or just use the --plan flag / positional.
+    const picked = await defaultReadPlanSelection(cwd);
+    if (picked === undefined) return { kind: "cancelled" };
+    return { kind: "ok", path: picked };
+  }
+
+  // 4. Non-TTY fallback: newest *.yaml in the plans dir. Same behavior
+  //    as the v0.1 default; preserved so scripts piping into `pilot build`
+  //    with no args keep working.
+  const plansDir = await getPlansDir(cwd);
+  const newest = await findNewestYaml(plansDir);
+  if (newest === null) {
+    return {
+      kind: "error",
+      message: `no *.yaml files in ${plansDir}`,
+    };
+  }
+  return { kind: "ok", path: newest };
+}
+
+async function isFile(p: string): Promise<boolean> {
+  try {
+    const st = await fs.stat(p);
+    return st.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function findNewestYaml(dir: string): Promise<string | null> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  const yamls = entries.filter(
+    (n) => n.endsWith(".yaml") || n.endsWith(".yml"),
+  );
+  if (yamls.length === 0) return null;
   let newest: { name: string; mtime: number } | null = null;
   for (const name of yamls) {
-    const st = await fs.stat(path.join(dir, name));
-    if (newest === null || st.mtimeMs > newest.mtime) {
-      newest = { name, mtime: st.mtimeMs };
+    try {
+      const st = await fs.stat(path.join(dir, name));
+      if (newest === null || st.mtimeMs > newest.mtime) {
+        newest = { name, mtime: st.mtimeMs };
+      }
+    } catch {
+      continue;
     }
   }
-  return path.join(dir, newest!.name);
+  return newest ? path.join(dir, newest.name) : null;
+}
+
+/**
+ * Default interactive plan picker. Dynamic-imports `@inquirer/prompts`
+ * so the dep is only loaded when `pilot build` is invoked interactively
+ * with no plan arg. Matches the pattern used in `pilot plan` for the
+ * free-text prompt.
+ *
+ * Returns the chosen absolute plan path, or `undefined` if the user hit
+ * Ctrl-C (inquirer throws `ExitPromptError`).
+ */
+async function defaultReadPlanSelection(
+  cwd: string,
+): Promise<string | undefined> {
+  const plansDir = await getPlansDir(cwd);
+  let entries: string[];
+  try {
+    entries = await fs.readdir(plansDir);
+  } catch {
+    return undefined;
+  }
+  const yamls = entries.filter(
+    (n) => n.endsWith(".yaml") || n.endsWith(".yml"),
+  );
+  if (yamls.length === 0) return undefined;
+
+  // Stat in parallel to sort by mtime desc.
+  const stats = await Promise.all(
+    yamls.map(async (name) => {
+      const full = path.join(plansDir, name);
+      try {
+        const st = await fs.stat(full);
+        return { name, full, mtime: st.mtimeMs };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const sorted = stats
+    .filter((s): s is NonNullable<typeof s> => s !== null)
+    .sort((a, b) => b.mtime - a.mtime);
+
+  // Best-effort plan-name enrichment. If loadPlan succeeds, show the
+  // `name:` field alongside the filename. If it fails (invalid YAML,
+  // schema errors, etc.), just show the filename — a broken plan still
+  // belongs in the picker list so the user can discover it.
+  const annotated = await Promise.all(
+    sorted.map(async (s) => {
+      try {
+        const loaded = await loadPlan(s.full);
+        const planName = loaded.ok ? loaded.plan.name : null;
+        return { ...s, planName };
+      } catch {
+        return { ...s, planName: null };
+      }
+    }),
+  );
+
+  const choices = annotated.map((a) => ({
+    name: formatPickerRow(a.name, a.planName, a.mtime),
+    value: a.full,
+  }));
+
+  const { select } = await import("@inquirer/prompts");
+  try {
+    const chosen = await select({
+      message: "Pick a plan:",
+      choices,
+    });
+    return chosen;
+  } catch (err) {
+    if (isExitPromptError(err)) return undefined;
+    throw err;
+  }
+}
+
+function formatPickerRow(
+  filename: string,
+  planName: string | null,
+  mtimeMs: number,
+): string {
+  const rel = relativeTimeFromNow(mtimeMs);
+  if (planName === null) return `${filename}  —  ${rel}`;
+  return `${filename}  —  ${planName}  —  ${rel}`;
+}
+
+function relativeTimeFromNow(thenMs: number): string {
+  const deltaMs = Date.now() - thenMs;
+  const s = Math.max(0, Math.round(deltaMs / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return `${d}d ago`;
+}
+
+function isExitPromptError(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    "name" in err &&
+    (err as { name: unknown }).name === "ExitPromptError"
+  );
+}
+
+/**
+ * Start a streaming logger that writes per-task progress lines to
+ * `stderrWriter` as events are appended to the DB. Returns an
+ * unsubscribe function that teardown should call in all paths
+ * (normal completion, SIGINT, error).
+ *
+ * The logger subscribes to the global `appendEvent` fan-out (added in
+ * `src/pilot/state/events.ts`). Subscribing there instead of the
+ * EventBus keeps us at the semantic layer (task-level events already
+ * computed by the worker) rather than the raw opencode SSE stream.
+ *
+ * Output is deliberately compact — one line per high-signal event, not
+ * every event kind. Users who need the full trace can `pilot logs --run`.
+ */
+export function startStreamingLogger(args: {
+  stderrWriter: (chunk: string) => void;
+  runId: string;
+  totalTasks: number;
+  subscribe: typeof import("../state/events.js").subscribeToEvents;
+  clock?: () => number;
+}): () => void {
+  const { stderrWriter, runId, totalTasks, subscribe } = args;
+  const clock = args.clock ?? (() => Date.now());
+  const taskStart = new Map<string, number>();
+  let succeeded = 0;
+  let failed = 0;
+
+  const formatTs = (ms: number): string => {
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  };
+
+  const write = (line: string) => {
+    stderrWriter(`[${formatTs(clock())}] ${line}\n`);
+  };
+
+  const unsub = subscribe((event) => {
+    // Scope to this run only; in practice there's only one active run
+    // per `pilot build` process, but filter defensively in case other
+    // runs concurrently insert (pilot plan, other subsystems).
+    if (event.runId !== runId) return;
+
+    const id = event.taskId;
+    switch (event.kind) {
+      case "task.started":
+        if (id !== null) taskStart.set(id, event.ts);
+        write(`task.started ${id ?? "?"}`);
+        break;
+      case "task.verify.passed":
+        write(`task.verify.passed ${id ?? "?"}`);
+        break;
+      case "task.verify.failed":
+        write(`task.verify.failed ${id ?? "?"}`);
+        break;
+      case "task.succeeded": {
+        succeeded += 1;
+        const ms = id !== null ? event.ts - (taskStart.get(id) ?? event.ts) : 0;
+        write(`task.succeeded ${id ?? "?"} in ${Math.round(ms / 1000)}s`);
+        write(`run.progress ${succeeded}/${totalTasks} succeeded`);
+        break;
+      }
+      case "task.failed": {
+        failed += 1;
+        const ms = id !== null ? event.ts - (taskStart.get(id) ?? event.ts) : 0;
+        write(`task.failed ${id ?? "?"} in ${Math.round(ms / 1000)}s`);
+        write(
+          `run.progress ${succeeded}/${totalTasks} succeeded, ${failed} failed`,
+        );
+        break;
+      }
+      case "task.aborted":
+        write(`task.aborted ${id ?? "?"}`);
+        break;
+      case "task.stopped":
+        write(`task.stopped ${id ?? "?"} (builder STOP)`);
+        break;
+      case "task.blocked":
+        write(`task.blocked ${id ?? "?"}`);
+        break;
+      case "task.touches.violation":
+        write(`task.touches.violation ${id ?? "?"}`);
+        break;
+      // Other kinds (task.session.created, task.attempt, run.*) are
+      // intentionally suppressed — too chatty for stdout. `pilot logs`
+      // carries the full trace.
+      default:
+        break;
+    }
+  });
+
+  return unsub;
 }
 
 async function deriveUniqueSlug(

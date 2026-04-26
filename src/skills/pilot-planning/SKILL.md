@@ -11,7 +11,7 @@ A good plan trades a planning-session's worth of patient thought for hours of un
 
 ## Workflow
 
-Apply these seven rules in order. Each rule has its own file in `rules/` for the full text:
+Apply these eight rules in order. Each rule has its own file in `rules/` for the full text:
 
 1. [`first-principles.md`](rules/first-principles.md) — Frame the task FROM the user's intent, not from a templated checklist. Ask "what does the user actually want done?" before "what files might change?"
 
@@ -26,6 +26,8 @@ Apply these seven rules in order. Each rule has its own file in `rules/` for the
 6. [`milestones.md`](rules/milestones.md) — Optional grouping. Use when several tasks share a "is this batch done?" check (e.g. integration tests after a chunk of unit-test work).
 
 7. [`self-review.md`](rules/self-review.md) — Before declaring the plan ready, run through a 7-question checklist. Find the holes yourself; the validator only catches schema errors.
+
+8. [`task-context.md`](rules/task-context.md) — Every non-trivial task carries a `context:` block. Thin plans fail because the builder works each task from scratch with no carry-over; rich context pre-loads what the builder needs to work confidently. Cover outcome, rationale, code pointers, acceptance.
 
 ## After applying the rules
 
