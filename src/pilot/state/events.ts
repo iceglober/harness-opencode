@@ -55,6 +55,63 @@ export function appendEvent(
     `INSERT INTO events (run_id, task_id, ts, kind, payload) VALUES (?, ?, ?, ?, ?)`,
     [args.runId, args.taskId ?? null, ts, args.kind, payloadStr],
   );
+  // Fan out to live subscribers. Subscribers observe events in
+  // insertion order after they're durably persisted, so a subscriber
+  // failure cannot drop an event that the DB already recorded.
+  // Iterate over a snapshot so a subscriber calling unsubscribe()
+  // during dispatch doesn't corrupt the loop.
+  if (eventSubscribers.length > 0) {
+    const snapshot = eventSubscribers.slice();
+    for (const sub of snapshot) {
+      try {
+        sub({
+          runId: args.runId,
+          taskId: args.taskId ?? null,
+          kind: args.kind,
+          payload: args.payload,
+          ts,
+        });
+      } catch {
+        // Swallow subscriber errors — the event is already in the DB;
+        // we must not fail the worker because a live logger threw.
+      }
+    }
+  }
+}
+
+// --- Live event subscription -----------------------------------------------
+//
+// Optional fan-out for callers (e.g. `pilot build`'s streaming logger) that
+// want to observe events as they're written. Subscription is process-global
+// and lives at module scope because `appendEvent` is called from the worker
+// via direct import; prop-drilling a callback through `runWorker` would touch
+// 20+ call sites and bleed worker internals into every caller.
+//
+// Subscribers run synchronously after the DB insert. They should be fast and
+// must not throw (they can, but exceptions are swallowed).
+
+export type EventSubscriber = (event: {
+  runId: string;
+  taskId: string | null;
+  kind: string;
+  payload: unknown;
+  ts: number;
+}) => void;
+
+const eventSubscribers: EventSubscriber[] = [];
+
+/**
+ * Register a subscriber that receives every event written via
+ * `appendEvent` from now until the returned unsubscribe is called.
+ *
+ * Returns an idempotent unsubscribe function.
+ */
+export function subscribeToEvents(sub: EventSubscriber): () => void {
+  eventSubscribers.push(sub);
+  return () => {
+    const i = eventSubscribers.indexOf(sub);
+    if (i !== -1) eventSubscribers.splice(i, 1);
+  };
 }
 
 /**

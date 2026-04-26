@@ -156,6 +156,13 @@ const VerifyCommandSchema = z.string().min(1, "verify entries must be non-empty"
  *     Distinct from `prompt` so status output stays compact.
  *   - `prompt`: the actual instruction for the builder agent. Multi-line
  *     allowed (YAML `|` block scalar).
+ *   - `context`: optional rich markdown block injected into the builder's
+ *     kickoff prompt under a `## Context` section. Use it to carry
+ *     scope, rationale, acceptance criteria, or relevant code pointers —
+ *     anything a builder with zero prior context would need to work
+ *     confidently. Distinct from `prompt` so the directive ("do X")
+ *     stays crisp and the context ("because Y, see Z") is addressable
+ *     separately in status output and review.
  *   - `touches`: glob patterns. Empty array = "no edits" (verify-only task).
  *   - `verify`: shell commands run after the agent reports done. ALL must
  *     pass for the task to succeed.
@@ -173,6 +180,7 @@ const TaskSchema = z
       .regex(TASK_ID_PATTERN, "task id must match /^[A-Z][A-Z0-9-]*$/"),
     title: z.string().min(1, "task title must be non-empty"),
     prompt: z.string().min(1, "task prompt must be non-empty"),
+    context: z.string().optional(),
     touches: TouchesSchema.default([]),
     verify: z.array(VerifyCommandSchema).default([]),
     depends_on: z

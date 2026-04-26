@@ -90,10 +90,10 @@ describe("skills bundle", () => {
     expect(countFiles(dir)).toBe(61);
   });
 
-  it("pilot-planning has SKILL.md + 7 rules (8 files total)", () => {
+  it("pilot-planning has SKILL.md + 8 rules (9 files total)", () => {
     const dir = path.join(DIST_SKILLS, "pilot-planning");
-    expect(countFiles(dir)).toBe(8);
-    // Verify the rules dir contains all 7 expected files (per the
+    expect(countFiles(dir)).toBe(9);
+    // Verify the rules dir contains all 8 expected files (per the
     // pilot-planning skill's published structure).
     const ruleFiles = fs
       .readdirSync(path.join(dir, "rules"))
@@ -104,6 +104,7 @@ describe("skills bundle", () => {
       "first-principles.md",
       "milestones.md",
       "self-review.md",
+      "task-context.md",
       "touches-scope.md",
       "verify-design.md",
     ]);

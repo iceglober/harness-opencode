@@ -28,6 +28,7 @@ function makeTask(overrides: Partial<PlanTask> = {}): PlanTask {
     touches: overrides.touches ?? ["src/hello.ts", "test/hello.test.ts"],
     verify: overrides.verify ?? ["bun test test/hello.test.ts"],
     depends_on: overrides.depends_on ?? [],
+    ...(overrides.context !== undefined ? { context: overrides.context } : {}),
     ...(overrides.agent !== undefined ? { agent: overrides.agent } : {}),
     ...(overrides.model !== undefined ? { model: overrides.model } : {}),
     ...(overrides.max_turns !== undefined ? { max_turns: overrides.max_turns } : {}),
@@ -159,6 +160,63 @@ describe("kickoffPrompt — structure and required content", () => {
   test("verify section explains 'no verify' case clearly", () => {
     const out = kickoffPrompt(makeTask({ verify: [] }), makeCtx());
     expect(out).toMatch(/No verify commands|without protest/i);
+  });
+});
+
+// --- kickoffPrompt: optional context section -----------------------------
+
+describe("kickoffPrompt — context section", () => {
+  test("omits the context section when task.context is undefined", () => {
+    const out = kickoffPrompt(makeTask(), makeCtx());
+    expect(out).not.toMatch(/^## Context$/m);
+  });
+
+  test("omits the context section when task.context is empty string", () => {
+    const out = kickoffPrompt(makeTask({ context: "" }), makeCtx());
+    expect(out).not.toMatch(/^## Context$/m);
+  });
+
+  test("omits the context section when task.context is whitespace-only", () => {
+    const out = kickoffPrompt(makeTask({ context: "   \n\n  " }), makeCtx());
+    expect(out).not.toMatch(/^## Context$/m);
+  });
+
+  test("emits the context section with trimmed body when context is non-empty", () => {
+    const out = kickoffPrompt(
+      makeTask({
+        context:
+          "\n\n## Outcome\n\nUser can now type `pilot build <name>` without typing the absolute path.\n\n## Code pointers\n\n- src/pilot/cli/build.ts: resolvePlanPath (lines 350-370)\n\n",
+      }),
+      makeCtx(),
+    );
+    expect(out).toMatch(/^## Context$/m);
+    expect(out).toMatch(/User can now type `pilot build <name>`/);
+    expect(out).toMatch(/src\/pilot\/cli\/build\.ts/);
+    // Body should be trimmed — no trailing whitespace block.
+    expect(out).not.toMatch(/\n\n\n+$/);
+  });
+
+  test("context section appears BEFORE the final ## Task directive", () => {
+    const out = kickoffPrompt(
+      makeTask({ context: "SOME_CONTEXT_MARKER" }),
+      makeCtx(),
+    );
+    const ctxIdx = out.indexOf("## Context");
+    const taskIdx = out.indexOf("## Task");
+    expect(ctxIdx).toBeGreaterThan(-1);
+    expect(taskIdx).toBeGreaterThan(-1);
+    expect(ctxIdx).toBeLessThan(taskIdx);
+  });
+
+  test("context section appears AFTER the verify block (reading order: rules → scope → verify → context → task)", () => {
+    const out = kickoffPrompt(
+      makeTask({ context: "SOME_CONTEXT_MARKER" }),
+      makeCtx(),
+    );
+    const verifyIdx = out.indexOf("## Verify commands");
+    const ctxIdx = out.indexOf("## Context");
+    expect(verifyIdx).toBeGreaterThan(-1);
+    expect(ctxIdx).toBeGreaterThan(verifyIdx);
   });
 });
 
