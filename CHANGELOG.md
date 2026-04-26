@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.1
+
+### Patch Changes
+
+- [#127](https://github.com/iceglober/harness-opencode/pull/127) [`afe4f8e`](https://github.com/iceglober/harness-opencode/commit/afe4f8e8cdfc360fc8b3b169f1d385db97f84eb4) Thanks [@iceglober](https://github.com/iceglober)! - Fix PRIME dispatching to `pilot-planner` (or falling back to `general`) instead of `@plan` during normal sessions. The `@plan` agent was registered as `mode: "primary"` — which meant it wasn't visible to other agents' `task`-tool subagent picker — so when PRIME reached Phase 2 and tried to "delegate to @plan via the task tool", the only planner-shaped subagent it could see was `pilot-planner` (whose description also led with "Interactive planner…"). Switch `@plan` to `mode: "all"` — which per OpenCode's agent docs means the agent is both a primary (Tab-cycleable, top-level `@plan` invocation works) AND a subagent (visible to other agents' task-tool picker). No user-visible regression. Also rewrite `pilot-planner`'s description to remove the "Interactive planner" prefix collision. Two regression tests lock the fix.
+
+- [#125](https://github.com/iceglober/harness-opencode/pull/125) [`f4c6905`](https://github.com/iceglober/harness-opencode/commit/f4c69051e23d6519d1db1f6591cc41562d2339bf) Thanks [@iceglober](https://github.com/iceglober)! - Make `pilot build` failures diagnosable from the terminal alone: failure phase and reason now print inline beneath each `task.failed` line, the run summary includes a per-failed-task detail block with session id and preserved worktree path, and the blocked-cascade is de-noised to one summary line instead of one scary line per blocked task.
+
+  Also fixes two supporting bugs: a preserved-on-failure worktree slot no longer poisons every subsequent task in the run, and `pilot status --run <id>` / `pilot logs --run <id>` now resolve the state DB from any worktree (or any repo under the same pilot base), so you can investigate a failed run from wherever you happen to be checked out.
+
+- [#127](https://github.com/iceglober/harness-opencode/pull/127) [`afe4f8e`](https://github.com/iceglober/harness-opencode/commit/afe4f8e8cdfc360fc8b3b169f1d385db97f84eb4) Thanks [@iceglober](https://github.com/iceglober)! - PRIME now delegates Phase 3 (plan execution) to `@build` via the task tool instead of executing file edits itself. This moves the highest-volume token-consumer in the five-phase workflow off the `deep`/Opus tier and onto the `mid` tier — users can swap Sonnet for Kimi K2, GLM-4.6, Haiku, or any other cheap mid-tier model and see a significant cost reduction on substantial work.
+
+  `@build` now uses `mode: "all"` (same pattern as `@plan`): top-level `@build <plan-path>` invocation still works for users who want to execute a plan directly, AND the agent is visible to PRIME's task-tool picker for delegation. `@build`'s prompt is reshaped for the dual invocation: sections trimmed to avoid duplicating PRIME's Phase 4 QA delegation (full-suite test runs + qa-reviewer dispatch moved to PRIME), a structured "Return payload" section added for PRIME-relayed summaries, and the `question` tool is scoped to top-level invocations only (subagent-mode invocations STOP with a blocker payload that PRIME relays). Three regression tests lock the behavioral changes.
+
 ## 0.16.0
 
 ### Minor Changes
