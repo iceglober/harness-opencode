@@ -780,7 +780,7 @@ describe("printSummary — failure block", () => {
                             cost_usd, last_error)
          VALUES (?, 'T1-STALL', 'failed', 1, 'ses_abc123',
                  'pilot/test/T1-STALL', '/tmp/wt/00',
-                 1_700_000_000_000, 1_700_000_306_000,
+                 1700000000000, 1700000306000,
                  0, 'stalled after 300000ms (0 events, last none)')`,
         [runId],
       );
@@ -790,7 +790,7 @@ describe("printSummary — failure block", () => {
                             cost_usd, last_error)
          VALUES (?, 'T3-PREPFAIL', 'failed', 0, NULL,
                  NULL, NULL,
-                 1_700_000_306_000, 1_700_000_306_000,
+                 1700000306000, 1700000306000,
                  0, 'worktree prepare failed: slot 0 is preserved')`,
         [runId],
       );
@@ -884,7 +884,7 @@ describe("printSummary — failure block", () => {
                             branch, worktree_path, started_at, finished_at,
                             cost_usd, last_error)
          VALUES (?, 'T1', 'succeeded', 1, 'ses_ok', 'pilot/test/T1',
-                 '/tmp/wt/00', 1_700_000_000_000, 1_700_000_010_000, 0, NULL)`,
+                 '/tmp/wt/00', 1700000000000, 1700000010000, 0, NULL)`,
         [runId],
       );
 
