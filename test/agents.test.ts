@@ -9,23 +9,32 @@ describe("createAgents", () => {
   const agents = createAgents();
 
   it("returns exactly 14 agents", () => {
-    // 3 original primary + 9 subagents + 2 pilot primaries (Phase F1+F2)
+    // 14 agents total: prime (mode:primary), plan + build (both mode:all —
+    // primary AND task-tool-dispatchable), 9 pure subagents, 2 pilot subagents.
     expect(Object.keys(agents).length).toBe(14);
   });
 
-  it("has 3 primary agents with mode=primary", () => {
+  it("has 2 primary-capable agents besides plan (prime, build; mode=primary or mode=all)", () => {
+    // prime is mode:primary. build is mode:all (primary-invocable AND
+    // task-tool-dispatchable). plan is also mode:all but tested separately
+    // below — this test is the "always-primary-capable" cohort.
     for (const name of [
       "prime",
-      "plan",
       "build",
     ]) {
       expect(agents[name]).toBeDefined();
-      expect(agents[name]!.mode).toBe("primary");
+      expect(["primary", "all"]).toContain(agents[name]!.mode);
     }
   });
 
-  it("has the 11 subagents with mode=subagent", () => {
-    const subagents = [
+  it("has 13 subagent-capable agents (mode=subagent or mode=all)", () => {
+    // "Subagent-capable" means the agent appears in other agents'
+    // task-tool picker. mode: "subagent" and mode: "all" both qualify.
+    // plan and build both have mode:"all" — user-invocable AND
+    // task-dispatchable. The other 11 are mode:"subagent" only.
+    const subagentCapable = [
+      "plan",
+      "build",
       "qa-reviewer",
       "qa-thorough",
       "plan-reviewer",
@@ -38,10 +47,63 @@ describe("createAgents", () => {
       "pilot-builder",
       "pilot-planner",
     ];
-    for (const name of subagents) {
+    for (const name of subagentCapable) {
       expect(agents[name]).toBeDefined();
-      expect(agents[name]!.mode).toBe("subagent");
+      expect(["subagent", "all"]).toContain(agents[name]!.mode);
     }
+  });
+
+  it("plan agent is task-tool-dispatchable (not mode:primary)", () => {
+    // Guard against accidental reversion. @plan must be reachable by
+    // other agents' task-tool picker — either mode:"subagent" or
+    // mode:"all". Flipping back to mode:"primary" re-opens the bug
+    // where PRIME's Phase 2 delegation silently falls through to
+    // pilot-planner (closest matching subagent) or general.
+    // Confirmed via OpenCode docs: only mode:"subagent" and mode:"all"
+    // surface an agent to the task tool.
+    expect(agents["plan"]).toBeDefined();
+    expect(agents["plan"]!.mode).not.toBe("primary");
+  });
+
+  it("build agent is task-tool-dispatchable (not mode:primary)", () => {
+    // Same guard as @plan. PRIME's Phase 3 delegates execution to
+    // @build via the task tool; @build must be reachable. mode:"all"
+    // also preserves top-level @build invocation for users who want
+    // to run against a plan directly. Reverting to mode:"primary"
+    // silently kills the Phase 3 delegation path.
+    expect(agents["build"]).toBeDefined();
+    expect(agents["build"]!.mode).not.toBe("primary");
+  });
+
+  it("pilot-planner description does not collide with plan description", () => {
+    // The bug: two planner-shaped agents both led with "Interactive
+    // planner" in their descriptions. PRIME's task-tool picker matched
+    // pilot-planner instead of @plan. After the fix, the lead phrase
+    // "Interactive planner" must be unique to @plan.
+    const planDesc = (agents["plan"]!.description ?? "") as string;
+    const pilotDesc = (agents["pilot-planner"]!.description ?? "") as string;
+    expect(planDesc.toLowerCase().startsWith("interactive planner")).toBe(true);
+    expect(pilotDesc.toLowerCase().startsWith("interactive planner")).toBe(false);
+  });
+
+  it("prime prompt delegates Phase 3 to @build", () => {
+    // Guard the Phase 3 delegation rewrite. PRIME's prompt must
+    // explicitly instruct delegation to @build. Falling back to the
+    // old inline file-edit loop re-concentrates Opus tokens on
+    // mechanical work — defeats the whole purpose of the @build split.
+    const prime = agents["prime"]!.prompt as string;
+    expect(prime).toContain("Delegate to `@build`");
+    expect(prime).not.toContain("For each item in the plan's `## File-level changes`:");
+  });
+
+  it("build prompt does not re-run full test suite (PRIME's Phase 4 owns it)", () => {
+    // PRIME's Phase 4 delegates full-suite testing to @qa-reviewer /
+    // @qa-thorough. @build running the full suite too duplicates that
+    // work. Per-file tests during execution (build.md section 3) are
+    // fine and expected. Final full-suite runs belong to Phase 4.
+    const build = agents["build"]!.prompt as string;
+    expect(build).not.toContain("Run the full test suite. It must pass.");
+    expect(build).not.toContain("Run lint. It must pass.");
   });
 
   it("every agent has a non-empty prompt", () => {

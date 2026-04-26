@@ -1,9 +1,9 @@
 ---
 description: |
-  Interactive planner for the pilot subsystem. Decomposes a feature
-  request into a `pilot.yaml` task DAG that the pilot-builder can
-  execute unattended. Uses the `pilot-planning` skill for methodology;
-  writes only inside the pilot plans directory.
+  Pilot-subsystem YAML plan generator. Decomposes a feature request
+  into a `pilot.yaml` task DAG for the pilot-builder agent to execute
+  unattended. Uses the `pilot-planning` skill. Writes only inside the
+  pilot plans directory. Invoked by `pilot plan <input>`.
 mode: subagent
 model: anthropic/claude-opus-4-7
 temperature: 0.3
