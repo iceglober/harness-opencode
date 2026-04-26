@@ -11,6 +11,9 @@ const {
   looksLikeBashFailure,
   extractFilePath,
   hashContent,
+  getToolOutputDir,
+  isUnderToolOutputDir,
+  takeGrepHead,
   DEFAULT_BACKPRESSURE_THRESHOLD,
   DEFAULT_LOOP_THRESHOLD,
 } = __test__;
@@ -153,18 +156,22 @@ describe("applyBackpressure", () => {
 
   it("truncates output above threshold for success", () => {
     const cfg = defaultConfig().backpressure;
-    const longOutput = "A".repeat(3000);
+    const longOutput = "A".repeat(7000); // exceeds new 6000 default
     const output = { output: longOutput };
     applyBackpressure(cfg, "bash", "call-2", output);
     expect(output.output.length).toBeLessThan(longOutput.length);
     expect(output.output).toContain("chars truncated");
-    expect(output.output).toContain("3000 total");
+    expect(output.output).toContain("7000 total");
   });
 
-  it("preserves head and tail content", () => {
-    const cfg = defaultConfig().backpressure;
+  it("preserves head and tail content (head-tail shape)", () => {
+    // The default bash shape is now "tail" which drops the head. To cover
+    // the legacy "head-tail" shape we explicitly opt in via perTool.
+    const cfg = makeConfig({
+      backpressure: { perTool: { bash: { shape: "head-tail" } } },
+    }).backpressure;
     const head = "HEAD_MARKER_" + "x".repeat(288);
-    const middle = "m".repeat(2000);
+    const middle = "m".repeat(7000); // exceeds 6000 threshold
     const tail = "y".repeat(180) + "_TAIL_MARKER";
     const output = { output: head + middle + tail };
     applyBackpressure(cfg, "bash", "call-3", output);
@@ -198,12 +205,149 @@ describe("applyBackpressure", () => {
 
   it("writes disk offload file", () => {
     const cfg = defaultConfig().backpressure;
-    const longOutput = "x".repeat(3000);
+    const longOutput = "x".repeat(7000); // exceeds new 6000 default
     const output = { output: longOutput };
     applyBackpressure(cfg, "bash", "call-disk-test", output);
     // The truncated output should reference a file path
     expect(output.output).toContain("Full output saved to:");
     expect(output.output).toContain("call-disk-test.txt");
+  });
+
+  // ---- per-tool shape defaults -------------------------------------------
+
+  it("default read shape is 'skip' — no truncation regardless of size", () => {
+    const cfg = defaultConfig().backpressure;
+    const longOutput = "x".repeat(10000);
+    const output = { output: longOutput };
+    applyBackpressure(cfg, "read", "call-read-skip", output, {
+      filePath: "/some/file.ts",
+    });
+    expect(output.output).toBe(longOutput);
+  });
+
+  it("default glob shape is 'skip' — no truncation regardless of size", () => {
+    const cfg = defaultConfig().backpressure;
+    const longOutput = "path/a.ts\n".repeat(2000);
+    const output = { output: longOutput };
+    applyBackpressure(cfg, "glob", "call-glob-skip", output);
+    expect(output.output).toBe(longOutput);
+  });
+
+  it("default bash shape is 'tail' — drops head, keeps tail", () => {
+    const cfg = defaultConfig().backpressure;
+    const text = "HEAD_MARKER" + "x".repeat(10000) + "TAIL_MARKER";
+    const output = { output: text };
+    applyBackpressure(cfg, "bash", "call-bash-tail", output);
+    expect(output.output).not.toContain("HEAD_MARKER");
+    expect(output.output).toContain("TAIL_MARKER");
+    expect(output.output).toContain("chars truncated");
+  });
+
+  it("default grep shape is 'head-with-count' — first N blocks + count tail", () => {
+    const cfg = defaultConfig().backpressure;
+    // 30 match blocks separated by blank lines. Each block ~250 chars to
+    // exceed threshold.
+    const block = (n: number) =>
+      `file.ts:${n}: match line ${n}\n` + "x".repeat(240);
+    const text = Array.from({ length: 30 }, (_, i) => block(i)).join("\n\n");
+    const output = { output: text };
+    applyBackpressure(cfg, "grep", "call-grep-head", output);
+    expect(output.output).toContain("file.ts:0:");
+    expect(output.output).toContain("file.ts:19:");
+    expect(output.output).not.toContain("file.ts:20:");
+    expect(output.output).toMatch(/10 more matches/);
+  });
+
+  // ---- recovery-read bypass ----------------------------------------------
+
+  it("recovery-read of spill path bypasses truncation", () => {
+    // Force read to head-tail shape so truncation would normally fire;
+    // then point it at a file under the spill dir to prove the bypass.
+    const cfg = makeConfig({
+      backpressure: { perTool: { read: { shape: "head-tail" } } },
+    }).backpressure;
+    const spillDir = getToolOutputDir();
+    const text = "x".repeat(10000);
+    const output = { output: text };
+    applyBackpressure(cfg, "read", "call-recovery", output, {
+      filePath: `${spillDir}/tooluse_abc123.txt`,
+    });
+    expect(output.output).toBe(text); // unchanged — bypass fired
+  });
+
+  it("non-spill read still truncates when shape is head-tail", () => {
+    const cfg = makeConfig({
+      backpressure: { perTool: { read: { shape: "head-tail" } } },
+    }).backpressure;
+    const text = "x".repeat(10000);
+    const output = { output: text };
+    applyBackpressure(cfg, "read", "call-nonspill", output, {
+      filePath: "/home/user/src/foo.ts",
+    });
+    expect(output.output.length).toBeLessThan(text.length);
+    expect(output.output).toContain("chars truncated");
+  });
+
+  // ---- perTool overrides -------------------------------------------------
+
+  it("user perTool override wins over default shape", () => {
+    // Force read to head-tail shape; should truncate a 10000-char output.
+    const cfg = makeConfig({
+      backpressure: { perTool: { read: { shape: "head-tail" } } },
+    }).backpressure;
+    const text = "x".repeat(10000);
+    const output = { output: text };
+    applyBackpressure(cfg, "read", "call-override", output, {
+      filePath: "/non/spill/path.txt",
+    });
+    expect(output.output.length).toBeLessThan(text.length);
+    expect(output.output).toContain("chars truncated");
+  });
+
+  it("user threshold override still works", () => {
+    const cfg = makeConfig({
+      backpressure: {
+        threshold: 500,
+        perTool: { bash: { shape: "head-tail" } },
+      },
+    }).backpressure;
+    const text = "x".repeat(1000);
+    const output = { output: text };
+    applyBackpressure(cfg, "bash", "call-threshold-override", output);
+    expect(output.output.length).toBeLessThan(text.length);
+    expect(output.output).toContain("1000 total");
+  });
+
+  it("DEFAULT_BACKPRESSURE_THRESHOLD is 6000", () => {
+    expect(DEFAULT_BACKPRESSURE_THRESHOLD).toBe(6000);
+  });
+
+  // ---- helpers ------------------------------------------------------------
+
+  it("isUnderToolOutputDir recognizes spill-path children", () => {
+    const spill = getToolOutputDir();
+    expect(isUnderToolOutputDir(`${spill}/abc.txt`)).toBe(true);
+    expect(isUnderToolOutputDir(`${spill}`)).toBe(true);
+    expect(isUnderToolOutputDir(`/not/spill/path.txt`)).toBe(false);
+    // Prefix-spoof guard: /a/spill-extra should NOT match /a/spill
+    expect(isUnderToolOutputDir(`${spill}-extra/x.txt`)).toBe(false);
+  });
+
+  it("takeGrepHead splits on blank lines and caps blocks", () => {
+    const blocks = Array.from({ length: 10 }, (_, i) => `block-${i}`);
+    const text = blocks.join("\n\n");
+    const { head, matchesKept, matchesOmitted } = takeGrepHead(text, 3);
+    expect(matchesKept).toBe(3);
+    expect(matchesOmitted).toBe(7);
+    expect(head).toBe("block-0\n\nblock-1\n\nblock-2");
+  });
+
+  it("takeGrepHead returns full text when blocks fit under cap", () => {
+    const text = "a\n\nb\n\nc";
+    const { head, matchesKept, matchesOmitted } = takeGrepHead(text, 10);
+    expect(matchesKept).toBe(3);
+    expect(matchesOmitted).toBe(0);
+    expect(head).toBe(text);
   });
 });
 

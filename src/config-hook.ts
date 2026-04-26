@@ -241,8 +241,10 @@ export function applyConfig(config: Config, pluginOptions?: PluginOptions): void
       "/private/tmp/**": "allow",          // macOS: /tmp symlinks to /private/tmp
       "/var/folders/**/T/**": "allow",     // macOS $TMPDIR expansion
       "~/.config/opencode/**": "allow",    // OpenCode's own config dir — agents read it routinely
+      "~/.config/crush/**": "allow",       // sibling AI tool config — agents read it routinely
       "~/.cache/**": "allow",              // XDG cache dir — tooling (npm, pip, etc.) writes here
       "~/.local/share/**": "allow",        // XDG data dir — Linear MCP cache, etc.
+      "~/.local/state/**": "allow",        // XDG state dir — includes plugin spill at harness-opencode/tool-output/ and perm-debug.json
       ...existingExtDir,
     },
   };

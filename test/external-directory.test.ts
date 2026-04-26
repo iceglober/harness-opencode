@@ -24,8 +24,10 @@ describe("applyConfig — external_directory defaults", () => {
     applyConfig(config);
     const extDir = config.permission?.external_directory ?? {};
     expect(extDir["~/.config/opencode/**"]).toBe("allow");
+    expect(extDir["~/.config/crush/**"]).toBe("allow");
     expect(extDir["~/.cache/**"]).toBe("allow");
     expect(extDir["~/.local/share/**"]).toBe("allow");
+    expect(extDir["~/.local/state/**"]).toBe("allow");
   });
 
   it("applyConfig allows ~/.glorious/opencode/** for repo-shared plan storage", () => {
@@ -62,7 +64,9 @@ describe("applyConfig — external_directory defaults", () => {
     expect(extDir["/private/tmp/**"]).toBe("allow");
     expect(extDir["/var/folders/**/T/**"]).toBe("allow");
     expect(extDir["~/.config/opencode/**"]).toBe("allow");
+    expect(extDir["~/.config/crush/**"]).toBe("allow");
     expect(extDir["~/.local/share/**"]).toBe("allow");
+    expect(extDir["~/.local/state/**"]).toBe("allow");
     // User's custom entry preserved
     expect(extDir["/custom/path/**"]).toBe("allow");
   });
