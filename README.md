@@ -23,7 +23,15 @@ opencode
 
 No global install. All [plugin features](#what-the-plugin-provides) load automatically. You won't have the `glrs-oc` CLI, but pilot commands will offer to install the plugin if you add the CLI later.
 
----
+### Verifying the published tarball
+
+This package publishes with [npm provenance](https://docs.npmjs.com/generating-provenance-statements) via GitHub Actions OIDC. After installing, verify the provenance chain:
+
+```bash
+npm audit signatures
+```
+
+This confirms the tarball on npm was built from this repo's `release.yml` workflow on the canonical main branch — a malicious publish with a stolen npm token would fail this check.
 
 ## The Glorious workflow
 
@@ -276,9 +284,46 @@ bun remove -g @glrs-dev/harness-opencode    # remove CLI
 - `node`/`npx` for memory MCP
 - `git` >= 2.5 for pilot worktrees
 
+## Security & threat boundaries
+
+Report vulnerabilities privately per [`SECURITY.md`](./SECURITY.md) — do NOT open a public issue. Expected response: acknowledge within 72h, fix-or-disclose decision within 30 days.
+
+### What this plugin can do on your machine
+
+This is a plugin with broad local-machine access. Install it deliberately:
+
+- **Reads and writes files** under your home directory (`~/.config/opencode/opencode.json`, `~/.cache/harness-opencode/*`, `~/.config/harness-opencode/install-id`, `~/.glorious/opencode/<repo>/pilot/*`).
+- **Runs local subprocesses** during normal operation: `git`, `gh`, `npm`/`bun`, `ast-grep`, `tsc`, `opencode`, and project-specific verify commands from any `pilot.yaml` you author.
+- **Makes outbound HTTPS calls** (all opt-out-able):
+  - `registry.npmjs.org` — daily version check. Opt out: `HARNESS_OPENCODE_UPDATE_CHECK=0`.
+  - `catwalk.charm.land` — model catalog during interactive install only. Response is schema-validated before it reaches your `opencode.json`.
+  - `us.aptabase.com` — anonymous telemetry. Opt out: `HARNESS_OPENCODE_TELEMETRY=0`, `DO_NOT_TRACK=1`, or `CI=true`.
+- **Configures MCP servers** in your OpenCode config that, on first use, download third-party code via `uvx` (Serena, `mcp-server-git`) or `npx` (`@playwright/mcp`, `@modelcontextprotocol/server-memory`). These MCPs run in their own subprocesses. Review them before enabling ones that ship disabled by default (`playwright`, `linear`).
+
+### What is NOT a sandbox
+
+The agent-bash **deny-list** in `src/agents/index.ts` (`rm -rf /*`, `chmod *`, `sudo *`, force-push variants, etc.) is a safety rail for common mistakes, not a sandbox. An agent can still:
+
+- Read any file the user can read (including `~/.ssh/id_*`, `~/.aws/credentials`, etc.).
+- Pipe arbitrary code to a shell (e.g., `curl <url> | sh`).
+- Modify shell startup files (`.zshrc`, `.bashrc`) or your PATH.
+- Run `npx <malicious-package>` and similar network-fetched executables.
+
+If a prompt (your own, or an injected one from a web page, issue comment, or MCP response) tells the agent to do something malicious, the deny-list will not block many of the paths. Treat the agent like a junior dev with unrestricted shell access — be careful what you paste into the prompt, and do not run this plugin on machines with credentials you cannot afford to rotate.
+
+A future release may sandbox the bash surface (filesystem allow-list, egress filter). Until then, the boundary is documented, not enforced.
+
+### What this plugin does NOT do
+
+- It does NOT ship any postinstall scripts. `bun add @glrs-dev/harness-opencode` mutates only `node_modules/`. All filesystem changes to your config happen in the explicit `glrs-oc install` / `bunx @glrs-dev/harness-opencode install` step.
+- It does NOT write to `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode/skills/`, or `~/.config/opencode/tools/`. Agents, commands, and skills live in `node_modules` (read-only by design). The only config write is `~/.config/opencode/opencode.json` during `install`.
+- It does NOT exfiltrate code, prompts, file paths, error messages, usernames, project names, or git remotes via telemetry. See the allow-list in `src/telemetry.ts`.
+
 ## Privacy & Telemetry
 
 **Update check.** Daily version check against `registry.npmjs.org`. Opt out: `HARNESS_OPENCODE_UPDATE_CHECK=0`.
+
+**Catwalk model catalog.** During interactive `install` only, fetches the provider list from `catwalk.charm.land/v2/providers`. The response is schema-validated (see `src/cli/catwalk.ts`) before any value reaches your `opencode.json`. If validation fails, the installer falls back to built-in presets.
 
 **Telemetry.** `@glrs-dev/harness-opencode` collects anonymous usage data via [Aptabase](https://aptabase.com) to help improve reliability. The data is opt-out, contains no personal information, and has no stable user identifier — Aptabase tracks anonymous sessions only.
 

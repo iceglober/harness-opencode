@@ -12,7 +12,8 @@
   },
   "files": [
     "dist",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "publishConfig": {
     "access": "public",
@@ -50,6 +51,9 @@
     "glorious"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=20.10"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iceglober/harness-opencode.git"

@@ -18,6 +18,22 @@
  *   - pilot ...    See `src/pilot/cli/index.ts`
  */
 
+// Runtime guard — keep first, before any imports that assume modern APIs.
+// Skip when running under Bun (which reports process.versions.bun and has
+// its own ABI compatibility; our `engines.node` floor applies to raw Node).
+if (!process.versions.bun) {
+  const [majorStr = "0", minorStr = "0"] = (process.versions.node ?? "0.0").split(".");
+  const major = Number(majorStr);
+  const minor = Number(minorStr);
+  if (major < 20 || (major === 20 && minor < 10)) {
+    process.stderr.write(
+      `harness-opencode requires Node.js >= 20.10 (you are on ${process.versions.node}).\n` +
+        `Upgrade Node or run via a compatible Bun runtime. See the "engines" field in package.json.\n`,
+    );
+    process.exit(1);
+  }
+}
+
 import {
   binary,
   command,
