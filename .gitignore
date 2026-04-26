@@ -37,3 +37,9 @@ home/.config/opencode/node_modules
 /costs.json
 /costs.jsonl
 /costs.json.tmp.*
+
+# Serena MCP per-project cache. Created by `serena_activate_project` when an
+# agent uses Serena's symbol tools in this checkout. Contains an indexed
+# symbol cache + project-local memories; regenerated on demand. Never
+# checked in.
+.serena/

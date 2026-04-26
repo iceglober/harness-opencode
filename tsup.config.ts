@@ -3,14 +3,22 @@ import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import pkg from "./package.json" with { type: "json" };
 
-// Recursively copy a directory tree
-function copyDir(src: string, dst: string) {
+// Recursively copy a directory tree. Optional `skip` filter receives the
+// relative path (from the initial `src` root) and returns true to skip.
+function copyDir(
+  src: string,
+  dst: string,
+  skip?: (relPath: string) => boolean,
+  rootSrc = src,
+) {
   mkdirSync(dst, { recursive: true });
   for (const entry of readdirSync(src)) {
     const srcPath = join(src, entry);
     const dstPath = join(dst, entry);
+    const rel = relative(rootSrc, srcPath);
+    if (skip?.(rel)) continue;
     if (statSync(srcPath).isDirectory()) {
-      copyDir(srcPath, dstPath);
+      copyDir(srcPath, dstPath, skip, rootSrc);
     } else {
       copyFileSync(srcPath, dstPath);
     }
@@ -47,7 +55,7 @@ export default defineConfig({
   async onSuccess() {
     // Copy skills
     try {
-      copyDir("src/skills", "dist/skills");
+      copyDir("src/skills", "dist/skills", (rel) => rel === "AGENTS.md");
       console.log("✓ Copied src/skills → dist/skills");
     } catch (e) {
       console.warn("! Could not copy skills:", e);

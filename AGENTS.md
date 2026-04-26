@@ -104,6 +104,16 @@ Releases are automated via [Changesets](https://github.com/changesets/changesets
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full contributor flow and bump-level cheat sheet.
 
+## Per-directory AGENTS.md
+
+Drill into these for the details of a specific surface:
+
+- `src/agents/AGENTS.md` — agent prompt/permission/tier convention
+- `src/commands/AGENTS.md` — slash-command prompt convention
+- `src/skills/AGENTS.md` — skill-dir convention and the vercel-*/AGENTS.md landmine
+- `src/pilot/AGENTS.md` — pilot subsystem (state, worker, worktree pool, CLI, per-repo paths)
+- `src/plugins/AGENTS.md` — sub-plugin pattern and current inventory
+
 ## Philosophy
 
 This is meant to feel inevitable, not clever. If you're tempted to add a "cool" feature, ask: does it reduce the friction of getting a fresh engineer running the five-phase workflow? If no, leave it out. The value is in the defaults being good and the install being boring.
