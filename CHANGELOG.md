@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.16.0
+
+### Minor Changes
+
+- [#124](https://github.com/iceglober/harness-opencode/pull/124) [`fafe250`](https://github.com/iceglober/harness-opencode/commit/fafe25009a584f2110a2f6b2fd907649bbf95ed8) Thanks [@iceglober](https://github.com/iceglober)! - Pivot the installer's provider/model data source from Catwalk (`catwalk.charm.land`) to Models.dev (`models.dev/api.json`), matching what OpenCode's runtime uses to validate model IDs.
+
+  Previously, the installer emitted provider IDs from Catwalk's registry (`bedrock/anthropic.claude-opus-4-6`, `vertexai/claude-opus-4-6@20250610`) that OpenCode's runtime rejects at agent invocation with `Agent <name>'s configured model <id> is not valid`. Models.dev uses different provider IDs (`amazon-bedrock`, `google-vertex-anthropic`) for the same providers. The AWS Bedrock and Google Vertex presets have been broken out of the box since this ID schism was introduced upstream; only the Anthropic preset happened to work because its provider ID is identical in both registries.
+
+  The Bedrock preset now emits `amazon-bedrock/global.anthropic.claude-*` IDs (using AWS CRIS global cross-region inference for the broadest availability). The Vertex preset now emits `google-vertex-anthropic/claude-*@default` IDs. The Anthropic preset is unchanged.
+
+  The plugin's runtime validator (`src/model-validator.ts`) now flags any model override starting with `bedrock/` or `vertex(ai)/` as invalid and suggests the Models.dev-valid replacement. If you hit `ProviderModelNotFoundError` or `Agent ... configured model ... is not valid` after a recent OpenCode upgrade, run `bunx @glrs-dev/harness-opencode doctor` — it enumerates the bad overrides and the correct Models.dev IDs.
+
+  **Note for existing installations:** your opencode.json is never auto-rewritten. The doctor tells you the exact line to change. If you had a working `anthropic/*` or `amazon-bedrock/*` config, nothing changes. If you had a Catwalk-style `bedrock/anthropic.*` or `vertexai/claude-*@<date>` config, you will now see warnings until you update it — those configs never actually worked at runtime against current OpenCode versions.
+
+### Patch Changes
+
+- [#122](https://github.com/iceglober/harness-opencode/pull/122) [`d433060`](https://github.com/iceglober/harness-opencode/commit/d433060149bdde3134ce1ad07deb8ea7d0536ee5) Thanks [@iceglober](https://github.com/iceglober)! - fix(pilot): prevent `git worktree add -B` collision between runs of the same plan.
+
+  Previously, every `pilot build` of the same plan constructed identical per-task branch names (`pilot/<slug>/<taskId>`). An aborted or failed prior run left `preserveOnFailure` worktrees alive (by design — so users can inspect), but those worktrees held the branch refs. The next `pilot build` tripped on `fatal: '<branch>' is already used by worktree at <prior-run-dir>`, failing T1 and cascade-blocking every downstream task.
+
+  Branch names now include the runId: `pilot/<slug>/<runId>/<taskId>`. Runs of the same plan no longer share a branch namespace; preserved worktrees from prior runs stay on disk for inspection but don't block new runs.
+
+  **Note on existing branches:** branches created by earlier pilot versions (without the runId segment) remain on disk as orphans. They won't be touched or reused by new runs. To clean up manually: `git branch --list 'pilot/*' | xargs -n1 git branch -D` (after confirming nothing valuable lives under those refs, and pruning any orphan worktrees with `git worktree prune`).
+
 ## 0.15.0
 
 ### Minor Changes
