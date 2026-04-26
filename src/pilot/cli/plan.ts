@@ -68,6 +68,13 @@ export const planCmd = command({
 export async function runPlan(opts: {
   input?: string | undefined;
   opencodeBin?: string | undefined;
+  /**
+   * Test seam. When `opts.input` is absent or empty, `runPlan` calls this
+   * to collect a free-text description from the user. Defaults to a
+   * terminal-native `@inquirer/prompts` `input()` call ("What are you
+   * building?"). Tests inject a stub to avoid blocking on stdin.
+   */
+  readInput?: () => Promise<string>;
 }): Promise<number> {
   const cwd = process.cwd();
   const plansDir = await getPlansDir(cwd);
@@ -76,7 +83,37 @@ export async function runPlan(opts: {
   // was added/modified during the planner session.
   const before = await snapshotYamls(plansDir);
 
-  const initialPrompt = buildInitialPrompt(opts.input);
+  // Resolve the effective input. If the caller supplied non-empty text,
+  // use it verbatim. Otherwise, prompt the user in the terminal BEFORE
+  // launching opencode so the planner session opens already-primed with
+  // the user's description — no in-TUI question picker, no canned "ask
+  // me clarifying questions" kickoff.
+  let effectiveInput = opts.input?.trim() ?? "";
+  if (effectiveInput.length === 0) {
+    const reader = opts.readInput ?? defaultReadInput;
+    let answer: string;
+    try {
+      answer = await reader();
+    } catch (err) {
+      // `@inquirer/prompts` throws an `ExitPromptError` when the user
+      // hits Ctrl-C. Treat that as SIGINT (exit 130) and bail cleanly
+      // without launching opencode.
+      if (isExitPromptError(err)) {
+        process.stderr.write("pilot plan: cancelled\n");
+        return 130;
+      }
+      throw err;
+    }
+    effectiveInput = answer.trim();
+    if (effectiveInput.length === 0) {
+      process.stderr.write(
+        "pilot plan: no description provided; aborting\n",
+      );
+      return 1;
+    }
+  }
+
+  const initialPrompt = buildInitialPrompt(effectiveInput);
   const bin = opts.opencodeBin ?? "opencode";
 
   const exit = await spawnTui({
@@ -113,19 +150,41 @@ export async function runPlan(opts: {
  * Build the first message that's injected into the planner's session.
  * Keep this short — the planner's prompt + skill carry the methodology.
  * The kickoff just names the input so the agent knows where to start.
+ *
+ * Callers must pass a non-empty trimmed string. `runPlan` guarantees this
+ * by prompting the user via `readInput` when no positional input was
+ * supplied; `buildInitialPrompt` is never reachable with an empty input.
  */
-function buildInitialPrompt(input: string | undefined): string {
-  if (input === undefined || input.trim().length === 0) {
-    return (
-      `Start a new pilot plan. Ask me 1-3 clarifying questions about ` +
-      `scope, success criteria, and constraints, then proceed.`
-    );
-  }
+function buildInitialPrompt(input: string): string {
   return (
-    `Start a new pilot plan for: ${input.trim()}\n\n` +
+    `Start a new pilot plan for: ${input}\n\n` +
     `Use the pilot-planning skill. If the input is a Linear ID or ` +
     `GitHub URL, fetch the ticket via the appropriate MCP/tool. ` +
     `Ask me 1-3 clarifying questions before writing the YAML.`
+  );
+}
+
+/**
+ * Default free-text reader. Dynamically imports `@inquirer/prompts` so
+ * the module is only loaded when actually needed (keeps cold-start cost
+ * off of `pilot plan <input>` invocations that skip the prompt).
+ */
+async function defaultReadInput(): Promise<string> {
+  const { input } = await import("@inquirer/prompts");
+  return input({ message: "What are you building?" });
+}
+
+/**
+ * `@inquirer/prompts` throws an `ExitPromptError` on Ctrl-C. The class
+ * isn't exported from a stable path, so we detect by `name` — same
+ * convention inquirer itself uses downstream.
+ */
+function isExitPromptError(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    "name" in err &&
+    (err as { name: unknown }).name === "ExitPromptError"
   );
 }
 

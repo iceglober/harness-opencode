@@ -47,19 +47,32 @@ function setupRepo(): { repo: string; pilotBase: string; plansDir: string } {
  *   - "happy": writes a fake plan into $PLANS_DIR, exits 0.
  *   - "fail": exits 1.
  *   - "noop": exits 0.
+ *   - "log-argv": records its own argv to `argvLogPath`, writes a fake
+ *     plan, exits 0. Used to assert the `--prompt` text that runPlan
+ *     passes to opencode.
  */
-function writeShim(kind: "happy" | "fail" | "noop", plansDir: string): string {
+function writeShim(
+  kind: "happy" | "fail" | "noop" | "log-argv",
+  plansDir: string,
+  argvLogPath?: string,
+): string {
   const file = path.join(tmp, "fake-opencode.sh");
   const body =
     kind === "happy"
       ? `#!/usr/bin/env bash\nmkdir -p ${JSON.stringify(plansDir)}\ncat > ${JSON.stringify(path.join(plansDir, "test-plan.yaml"))} <<'YAML'\nname: test\ntasks:\n  - id: T1\n    title: t\n    prompt: p\nYAML\nexit 0\n`
       : kind === "fail"
         ? `#!/usr/bin/env bash\nexit 1\n`
-        : `#!/usr/bin/env bash\nexit 0\n`;
+        : kind === "noop"
+          ? `#!/usr/bin/env bash\nexit 0\n`
+          : // log-argv
+            `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLogPath ?? "/dev/null")}\nmkdir -p ${JSON.stringify(plansDir)}\ncat > ${JSON.stringify(path.join(plansDir, "test-plan.yaml"))} <<'YAML'\nname: test\ntasks:\n  - id: T1\n    title: t\n    prompt: p\nYAML\nexit 0\n`;
   fs.writeFileSync(file, body);
   fs.chmodSync(file, 0o755);
   return file;
 }
+
+/** Test seam stub for `readInput`. Returns a fixed string. */
+const stubReadInput = (text: string) => async (): Promise<string> => text;
 
 async function withRepoEnv<T>(
   setup: ReturnType<typeof setupRepo>,
@@ -138,13 +151,78 @@ describe("runPlan", () => {
     expect(r.stderr).toMatch(/no new plan was saved/);
   });
 
-  test("input is optional", async () => {
+  test("no positional input: uses readInput seam to collect prompt", async () => {
     const setup = setupRepo();
     const shim = writeShim("happy", setup.plansDir);
     const r = await withRepoEnv(setup, () =>
-      captured(() => runPlan({ opencodeBin: shim })),
+      captured(() =>
+        runPlan({
+          opencodeBin: shim,
+          readInput: stubReadInput("from prompt"),
+        }),
+      ),
     );
     expect(r.code).toBe(0);
+  });
+
+  test("no positional input: typed prompt is passed to opencode --prompt", async () => {
+    const setup = setupRepo();
+    const argvLog = path.join(tmp, "argv.log");
+    const shim = writeShim("log-argv", setup.plansDir, argvLog);
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runPlan({
+          opencodeBin: shim,
+          readInput: stubReadInput("build me a thing"),
+        }),
+      ),
+    );
+    expect(r.code).toBe(0);
+    const argv = fs.readFileSync(argvLog, "utf8");
+    // The shim records one argv element per line. We should see the agent
+    // flag, the agent name, the prompt flag, and the initial prompt text
+    // (which embeds the user's typed input).
+    expect(argv).toMatch(/--agent/);
+    expect(argv).toMatch(/pilot-planner/);
+    expect(argv).toMatch(/--prompt/);
+    expect(argv).toMatch(/build me a thing/);
+  });
+
+  test("no positional input and readInput returns empty: exits 1 without launching opencode", async () => {
+    const setup = setupRepo();
+    const argvLog = path.join(tmp, "argv.log");
+    const shim = writeShim("log-argv", setup.plansDir, argvLog);
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runPlan({
+          opencodeBin: shim,
+          readInput: stubReadInput("   "), // whitespace-only
+        }),
+      ),
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/no description provided/);
+    // Shim must NOT have been invoked — the argv log file should not exist.
+    expect(fs.existsSync(argvLog)).toBe(false);
+  });
+
+  test("no positional input and readInput throws ExitPromptError: exits 130", async () => {
+    const setup = setupRepo();
+    const argvLog = path.join(tmp, "argv.log");
+    const shim = writeShim("log-argv", setup.plansDir, argvLog);
+    const readInputCancelled = async (): Promise<string> => {
+      const err = new Error("user cancelled") as Error & { name: string };
+      err.name = "ExitPromptError";
+      throw err;
+    };
+    const r = await withRepoEnv(setup, () =>
+      captured(() =>
+        runPlan({ opencodeBin: shim, readInput: readInputCancelled }),
+      ),
+    );
+    expect(r.code).toBe(130);
+    expect(r.stderr).toMatch(/cancelled/);
+    expect(fs.existsSync(argvLog)).toBe(false);
   });
 
   test("missing opencode binary surfaces a spawn error", async () => {
