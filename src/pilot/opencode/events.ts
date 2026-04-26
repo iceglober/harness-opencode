@@ -254,11 +254,19 @@ export class EventBus {
    * (the canonical name across event types per S3) and fall through
    * to all-session subscribers if the field is absent (e.g. some
    * server-wide events lack a sessionID).
+   *
+   * Diagnostic: when env var `PILOT_EVENT_LOG` is set to a writable path,
+   * every RAW event seen on the stream is appended as one JSON line
+   * BEFORE sessionID extraction or filtering. Used to debug
+   * "Forensics shows zero events but the stall fires" cases by
+   * comparing raw stream → filtered fan-out. Unset in normal
+   * operation (zero overhead).
    */
   private async runStream(
     client: OpencodeClient,
     signal: AbortSignal,
   ): Promise<void> {
+    const rawLogPath = process.env.PILOT_EVENT_LOG ?? null;
     let result;
     try {
       result = await client.event.subscribe({ signal });
@@ -279,6 +287,29 @@ export class EventBus {
           typeof (event.properties as { sessionID?: unknown }).sessionID === "string"
             ? ((event.properties as { sessionID: string }).sessionID)
             : null;
+
+        // Diagnostic: dump raw event + extractor result + live subscriber
+        // sessionIDs. Enabled when PILOT_EVENT_LOG is set. One JSON line
+        // per event. Best-effort; failures never break the bus.
+        if (rawLogPath !== null) {
+          try {
+            const { appendFileSync } = await import("node:fs");
+            const liveSubs = this.subscribers.map((s) => s.sessionId);
+            appendFileSync(
+              rawLogPath,
+              JSON.stringify({
+                ts: Date.now(),
+                type: event.type,
+                extractedSessionID: sessionID,
+                liveSubscriberSessionIDs: liveSubs,
+                matchedSubscribers: liveSubs.filter((s) => s === sessionID).length,
+                raw: rawEvent,
+              }) + "\n",
+            );
+          } catch {
+            // swallow — diagnostic must not break the stream
+          }
+        }
 
         // Fan out only to subscribers whose registered sessionId matches.
         // If the event has no sessionID, no subscribers match (we
