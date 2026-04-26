@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.3
+
+### Patch Changes
+
+- [#106](https://github.com/iceglober/harness-opencode/pull/106) [`a95bf9f`](https://github.com/iceglober/harness-opencode/commit/a95bf9f289b396e3e4067fd811acc42a98c22ba7) Thanks [@iceglober](https://github.com/iceglober)! - Stop auto-defaulting model selections in the installer. Users now pick models per tier (deep/mid/fast) from the provider's model list, with the default choice set to "Keep defaults (no model config)" so no paid models are configured without explicit user action.
+
 ## 0.13.2
 
 ### Patch Changes
